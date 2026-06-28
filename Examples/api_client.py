@@ -79,6 +79,12 @@ def raw_pcm_to_wav(raw_bytes: bytes, wav_path: Path, sample_rate: int, channels:
         wav_file.writeframes(raw_bytes)
 
 
+def streaming_wav_pcm_bytes(stream_bytes: bytes) -> bytes:
+    if len(stream_bytes) <= 44 or stream_bytes[:4] != b"RIFF" or stream_bytes[8:12] != b"WAVE":
+        raise ValueError("Response is not a WAV stream with a 44-byte PCM header.")
+    return stream_bytes[44:]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Call a running Genie-TTS FastAPI server.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -147,6 +153,18 @@ def main() -> int:
         int(raw_headers.get("x-genie-sample-width", "2")),
     )
 
+    stream_bytes, stream_headers, stream_elapsed = post_bytes(args.base_url, "/tts/legado.wav?wait_timeout=300", payload)
+    stream_path = output_dir / f"{args.character}-api-legado-stream.wav"
+    stream_wrapped_wav_path = output_dir / f"{args.character}-api-legado-stream-standardized.wav"
+    stream_path.write_bytes(stream_bytes)
+    raw_pcm_to_wav(
+        streaming_wav_pcm_bytes(stream_bytes),
+        stream_wrapped_wav_path,
+        int(stream_headers.get("x-genie-sample-rate", "32000")),
+        int(stream_headers.get("x-genie-channels", "1")),
+        int(stream_headers.get("x-genie-sample-width", "2")),
+    )
+
     wav_bytes, wav_headers, wav_elapsed = post_bytes(args.base_url, "/tts/wav", payload)
     wav_path = output_dir / f"{args.character}-api.wav"
     wav_path.write_bytes(wav_bytes)
@@ -159,6 +177,14 @@ def main() -> int:
             "elapsed_seconds": raw_elapsed,
             "raw_output": str(raw_path),
             "wav_wrapper_output": str(raw_wav_path),
+        },
+        "legado_stream_wav": {
+            "headers": stream_headers,
+            "bytes": len(stream_bytes),
+            "pcm_bytes": max(0, len(stream_bytes) - 44),
+            "elapsed_seconds": stream_elapsed,
+            "stream_output": str(stream_path),
+            "standardized_wav_output": str(stream_wrapped_wav_path),
         },
         "wav": {
             "headers": wav_headers,

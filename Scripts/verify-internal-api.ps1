@@ -82,6 +82,8 @@ if ($HostName -eq '0.0.0.0' -or $HostName -eq '::') {
 }
 $BaseUrl = "http://${ClientHost}:$Port"
 $RawOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName.raw"
+$StreamWavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName-stream.wav"
+$StreamStandardWavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName-stream-standardized.wav"
 $WavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName.wav"
 
 $serverCode = @"
@@ -121,6 +123,8 @@ $env:GENIE_VERIFY_RAW_TEXT = $RawText
 $env:GENIE_VERIFY_WAV_TEXT = $WavText
 $env:GENIE_VERIFY_SPLIT_SENTENCE = if ($SplitSentence) { 'true' } else { 'false' }
 $env:GENIE_VERIFY_RAW_OUT = $RawOut
+$env:GENIE_VERIFY_STREAM_WAV_OUT = $StreamWavOut
+$env:GENIE_VERIFY_STREAM_STANDARD_WAV_OUT = $StreamStandardWavOut
 $env:GENIE_VERIFY_WAV_OUT = $WavOut
 
 $clientScript = @'
@@ -142,6 +146,8 @@ raw_text = os.environ["GENIE_VERIFY_RAW_TEXT"]
 wav_text = os.environ["GENIE_VERIFY_WAV_TEXT"]
 split_sentence = os.environ["GENIE_VERIFY_SPLIT_SENTENCE"].lower() in {"1", "true", "yes", "y"}
 raw_out = Path(os.environ["GENIE_VERIFY_RAW_OUT"])
+stream_wav_out = Path(os.environ["GENIE_VERIFY_STREAM_WAV_OUT"])
+stream_standard_wav_out = Path(os.environ["GENIE_VERIFY_STREAM_STANDARD_WAV_OUT"])
 wav_out = Path(os.environ["GENIE_VERIFY_WAV_OUT"])
 
 
@@ -179,6 +185,25 @@ def post_bytes(path, payload, timeout=300):
         return response.status, normalize_headers(response.headers), b"".join(chunks)
 
 
+def raw_pcm_to_wav(pcm_bytes, path, sample_rate=32000, channels=1, sample_width=2):
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm_bytes)
+
+
+def inspect_wav(path):
+    with wave.open(str(path), "rb") as wav_file:
+        return {
+            "channels": wav_file.getnchannels(),
+            "sample_width": wav_file.getsampwidth(),
+            "sample_rate": wav_file.getframerate(),
+            "frames": wav_file.getnframes(),
+            "duration_seconds": wav_file.getnframes() / wav_file.getframerate(),
+        }
+
+
 def expected_first_provider(mode, selected_providers):
     if mode == "cpu":
         return "CPUExecutionProvider"
@@ -209,6 +234,7 @@ assert runtime_before["runtime_mode"] == runtime, runtime_before
 expected_provider = expected_first_provider(runtime, runtime_before["selected_providers"])
 assert runtime_before["selected_providers"][0] == expected_provider, runtime_before
 assert runtime_before["api_audio"]["raw_format"] == "pcm_s16le", runtime_before["api_audio"]
+assert runtime_before["api_audio"]["legado_stream_wav_endpoint"] == "/tts/legado.wav", runtime_before["api_audio"]
 assert runtime_before["api_audio"]["sample_rate"] == 32000, runtime_before["api_audio"]
 
 load_status, _, load_result = read_json("POST", "/load_character", {
@@ -252,6 +278,27 @@ assert cn_hubert_providers and expected_provider in cn_hubert_providers, cn_hube
 speaker_providers = runtime_after_raw["shared_models"].get("speaker_verification")
 if speaker_providers is not None:
     assert expected_provider in speaker_providers, speaker_providers
+
+stream_start = time.perf_counter()
+stream_status, stream_headers, stream_body = post_bytes("/tts/legado.wav?wait_timeout=300", raw_payload, timeout=300)
+stream_elapsed = time.perf_counter() - stream_start
+stream_wav_out.write_bytes(stream_body)
+assert stream_status == 200
+assert stream_headers.get("content-type", "").startswith("audio/wav"), stream_headers
+assert stream_headers.get("x-genie-audio-format") == "wav_stream_pcm_s16le", stream_headers
+assert stream_headers.get("x-genie-inner-audio-format") == "pcm_s16le", stream_headers
+assert stream_headers.get("x-genie-sample-rate") == "32000", stream_headers
+assert stream_headers.get("x-genie-channels") == "1", stream_headers
+assert stream_headers.get("x-genie-sample-width") == "2", stream_headers
+assert len(stream_body) > 44 and stream_body[:4] == b"RIFF" and stream_body[8:12] == b"WAVE", len(stream_body)
+stream_pcm = stream_body[44:]
+assert len(stream_pcm) > 0 and len(stream_pcm) % 2 == 0, len(stream_pcm)
+raw_pcm_to_wav(stream_pcm, stream_standard_wav_out)
+stream_wav_info = inspect_wav(stream_standard_wav_out)
+assert stream_wav_info["channels"] == 1, stream_wav_info
+assert stream_wav_info["sample_width"] == 2, stream_wav_info
+assert stream_wav_info["sample_rate"] == 32000, stream_wav_info
+assert stream_wav_info["frames"] > 0, stream_wav_info
 
 wav_payload = {
     "character_name": character,
@@ -304,6 +351,23 @@ summary = {
         "bytes": len(raw_body),
         "elapsed_seconds": raw_elapsed,
         "output": str(raw_out),
+    },
+    "legado_stream_wav": {
+        "status": stream_status,
+        "headers": {
+            "Content-Type": stream_headers.get("content-type"),
+            "X-Genie-Audio-Format": stream_headers.get("x-genie-audio-format"),
+            "X-Genie-Inner-Audio-Format": stream_headers.get("x-genie-inner-audio-format"),
+            "X-Genie-Sample-Rate": stream_headers.get("x-genie-sample-rate"),
+            "X-Genie-Channels": stream_headers.get("x-genie-channels"),
+            "X-Genie-Sample-Width": stream_headers.get("x-genie-sample-width"),
+        },
+        "bytes": len(stream_body),
+        "pcm_bytes": len(stream_pcm),
+        "elapsed_seconds": stream_elapsed,
+        "wave": stream_wav_info,
+        "stream_output": str(stream_wav_out),
+        "standardized_wav_output": str(stream_standard_wav_out),
     },
     "wav": {
         "status": wav_status,

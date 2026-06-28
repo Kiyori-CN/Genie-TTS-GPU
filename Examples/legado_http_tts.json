@@ -1,0 +1,8 @@
+{
+  "name": "Genie-TTS Feibi Stream",
+  "url": "@js:genieTtsUrl(speakText, speakSpeed);",
+  "contentType": "audio/wav",
+  "concurrentRate": "1500",
+  "enabledCookieJar": false,
+  "jsLib": "function genieTtsUrl(speakText, speakSpeed) {\n    var baseUrl = 'http://192.168.1.100:8000';\n    var body = JSON.stringify({\n        character_name: 'feibi',\n        text: String(speakText || ''),\n        split_sentence: true\n    });\n    var option = {\n        method: 'POST',\n        headers: {'Content-Type': 'application/json'},\n        body: body\n    };\n    return baseUrl + '/tts/legado.wav?wait_timeout=300,' + JSON.stringify(option);\n}\n"
+}
