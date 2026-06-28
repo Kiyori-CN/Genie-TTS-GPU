@@ -1,0 +1,11 @@
+# Genie-TTS internal CUDA runtime overlay.
+# Install into the project-local integrated environment only, for example:
+#   Runtime\.venv\Scripts\python.exe -m pip install -r requirements-cuda.txt
+
+onnxruntime-gpu==1.22.0
+nvidia-cuda-runtime-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cufft-cu12
+nvidia-nvjitlink-cu12

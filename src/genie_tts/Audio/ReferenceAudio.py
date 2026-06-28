@@ -2,6 +2,7 @@ from ..Utils.Utils import LRUCacheDict
 from ..GetPhonesAndBert import get_phones_and_bert
 from ..Audio.Audio import load_audio
 from ..ModelManager import model_manager
+from ..Profiling import profile_span
 
 from onnxruntime import InferenceSession
 import os
@@ -36,23 +37,27 @@ class ReferenceAudio:
         self.language: str = language
         self.phonemes_seq: Optional[np.ndarray] = None
         self.text_bert: Optional[np.ndarray] = None
-        self.set_text(prompt_text, language=language)
+        with profile_span("reference_text_g2p", language=language, text_chars=len(prompt_text)):
+            self.set_text(prompt_text, language=language)
 
         # 音频相关。
-        self.audio_32k: Optional[np.ndarray] = load_audio(
-            audio_path=prompt_wav,
-            target_sampling_rate=32000
-        )
-        self.audio_16k: np.ndarray = soxr.resample(self.audio_32k, 32000, 16000, quality='hq')
+        with profile_span("reference_audio_load", path=os.path.basename(prompt_wav)):
+            self.audio_32k: Optional[np.ndarray] = load_audio(
+                audio_path=prompt_wav,
+                target_sampling_rate=32000
+            )
+        with profile_span("reference_audio_resample", samples=int(self.audio_32k.size)):
+            self.audio_16k: np.ndarray = soxr.resample(self.audio_32k, 32000, 16000, quality='hq')
 
         self.audio_32k = np.expand_dims(self.audio_32k, axis=0)
         self.audio_16k = np.expand_dims(self.audio_16k, axis=0)  # 增加 Batch_Size 维度
 
         if not model_manager.cn_hubert:
             model_manager.load_cn_hubert()
-        self.ssl_content: Optional[np.ndarray] = model_manager.cn_hubert.run(
-            None, {'input_values': self.audio_16k}
-        )[0]
+        with profile_span("reference_hubert", providers=model_manager.cn_hubert.get_providers()):
+            self.ssl_content: Optional[np.ndarray] = model_manager.cn_hubert.run(
+                None, {'input_values': self.audio_16k}
+            )[0]
 
         self.global_emb: Optional[np.ndarray] = None
         self.global_emb_advanced: Optional[np.ndarray] = None
@@ -73,8 +78,10 @@ class ReferenceAudio:
         if self.global_emb is not None:
             return
         if model_manager.load_sv_model():
-            sv_emb = model_manager.speaker_verification_model.run(None, {'waveform': self.audio_16k})[0]
-            self.global_emb, self.global_emb_advanced = prompt_encoder.run(None, {
-                'ref_audio': self.audio_32k,
-                'sv_emb': sv_emb,
-            })
+            with profile_span("reference_speaker_verification", providers=model_manager.speaker_verification_model.get_providers()):
+                sv_emb = model_manager.speaker_verification_model.run(None, {'waveform': self.audio_16k})[0]
+            with profile_span("reference_prompt_encoder", providers=prompt_encoder.get_providers()):
+                self.global_emb, self.global_emb_advanced = prompt_encoder.run(None, {
+                    'ref_audio': self.audio_32k,
+                    'sv_emb': sv_emb,
+                })

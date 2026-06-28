@@ -209,7 +209,16 @@ genie.start_server(
 )
 ```
 
-> For request formats and API details, see our [API Server Tutorial](./Tutorial/English/API%20Server%20Tutorial.py).
+For the self-contained Windows package, prefer the package-local launcher:
+
+```powershell
+E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 127.0.0.1 -Port 8000
+```
+
+Use `-HostName 0.0.0.0` for LAN callers. For request formats, raw PCM/WAV
+semantics, error codes, client examples, validation, and profiling, see
+[API Service](./Docs/API-Service.md). A pure standard-library Python client is
+available at [Examples/api_client.py](./Examples/api_client.py).
 
 
 ---

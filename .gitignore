@@ -4,13 +4,16 @@ OpenVenv.bat
 Config.txt
 chinese-hubert-base.onnx
 open_jtalk_dic_utf_8-1.11/
-Docs/
+Docs/*
+!Docs/
+!Docs/API-Service.md
 GenieData/
 CharacterModels/
 UserData/
 GENIE_ENV/
 Deprecated/
 test/
+Runtime/
 
 # Python
 __pycache__/

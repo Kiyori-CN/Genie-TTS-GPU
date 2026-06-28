@@ -1,9 +1,21 @@
 """
-Start the API Server using genie.start_server(host=SERVER_HOST, port=SERVER_PORT, workers=1).
+Select the ONNX Runtime backend before loading models or starting the API server:
+genie.configure_runtime("cpu")  # cpu, cuda, directml, or auto
+Then start the API Server using genie.start_server(host=SERVER_HOST, port=SERVER_PORT, workers=1).
 
 Quick Reference for Genie TTS Server API
 
-1. Load Character Model
+1. Health Check
+Endpoint: GET /health
+Function: Confirm the API server is reachable.
+Request Parameters: None.
+
+2. Runtime Status
+Endpoint: GET /runtime
+Function: Inspect ONNX Runtime version, configured execution providers, available providers, and loaded models.
+Request Parameters: None.
+
+3. Load Character Model
 Endpoint: POST /load_character
 Function: Load a character model into the server.
 Request Parameters (JSON):
@@ -11,7 +23,7 @@ Request Parameters (JSON):
     - onnx_model_dir (string): Path to the model folder on the server.
     - language (string): Language of the model (e.g., 'en', 'zh', 'jp').
 
-2. Set Reference Audio
+4. Set Reference Audio
 Endpoint: POST /set_reference_audio
 Function: Set the audio required for voice cloning for the loaded character.
 Request Parameters (JSON):
@@ -20,27 +32,33 @@ Request Parameters (JSON):
     - audio_text (string): Text corresponding to the reference audio.
     - language (string): Language of the reference audio (e.g., 'en', 'zh', 'jp').
 
-3. Text-to-Speech (TTS)
-Endpoint: POST /tts
-Function: Generate speech and return it as an audio/wav stream.
+5. Text-to-Speech (TTS)
+Endpoint: POST /tts/raw
+Function: Generate speech and return raw 16-bit PCM chunks in the HTTP stream.
+Compatibility alias: POST /tts returns the same raw stream.
 Request Parameters (JSON):
     - character_name (string): Character name to use.
     - text (string): Text to convert to speech.
     - split_sentence (boolean, optional): Whether to auto-split sentences, default is false.
     - save_path (string, optional): Full path to save audio on the server.
 
-4. Unload Character Model
+6. Complete WAV Text-to-Speech
+Endpoint: POST /tts/wav
+Function: Generate speech and return a complete audio/wav response after synthesis finishes.
+Request Parameters: Same as POST /tts/raw.
+
+7. Unload Character Model
 Endpoint: POST /unload_character
 Function: Remove a character from server memory to free resources.
 Request Parameters (JSON):
     - character_name (string): Character name to unload.
 
-5. Stop All TTS Tasks
+8. Stop All TTS Tasks
 Endpoint: POST /stop
 Function: Immediately stop all ongoing speech synthesis tasks.
 Request Parameters: None.
 
-6. Clear Reference Audio Cache
+9. Clear Reference Audio Cache
 Endpoint: POST /clear_reference_audio_cache
 Function: Clear the loaded reference audio cache on the server.
 Request Parameters: None.
@@ -65,10 +83,25 @@ SAMPLE_RATE = 32000
 
 
 def run_server():
+    genie.configure_runtime("cpu")
     genie.start_server(host=SERVER_HOST, port=SERVER_PORT, workers=1)
 
 
 def main_client():
+    # 0. Check server health and runtime state
+    print("\n[Client] Step 0: Checking server health and runtime...")
+    try:
+        response = requests.get(f"{BASE_URL}/health")
+        response.raise_for_status()
+        print(f"[Client] Health: {response.json()}")
+
+        response = requests.get(f"{BASE_URL}/runtime")
+        response.raise_for_status()
+        print(f"[Client] Runtime: {response.json()}")
+    except requests.exceptions.RequestException as e:
+        print(f"[Client] Server health/runtime check failed: {e}")
+        return
+
     # 1. Load Character
     print("\n[Client] Step 1: Sending load character request...")
     load_payload = {
@@ -100,8 +133,8 @@ def main_client():
         print(f"[Client] Failed to set reference audio: {e}")
         return
 
-    # 3. Request TTS and play audio stream
-    print("\n[Client] Step 3: Requesting TTS and preparing audio stream...")
+    # 3. Request raw PCM TTS and play audio stream
+    print("\n[Client] Step 3: Requesting raw PCM TTS and preparing audio stream...")
     tts_payload = {
         "character_name": "<CHARACTER_NAME>",  # Use the same character name
         "text": "<TEXT_TO_SYNTHESIZE>",  # Replace with the text you want to synthesize
@@ -112,9 +145,10 @@ def main_client():
     stream = None
 
     try:
-        with requests.post(f"{BASE_URL}/tts", json=tts_payload, stream=True) as response:
+        with requests.post(f"{BASE_URL}/tts/raw", json=tts_payload, stream=True) as response:
             response.raise_for_status()
             print("[Client] Connected to audio stream, starting playback...")
+            print(f"[Client] Stream format: {response.headers.get('X-Genie-Audio-Format')}")
 
             # Iterate over received audio chunks
             for chunk in response.iter_content(chunk_size=1024):
@@ -137,6 +171,17 @@ def main_client():
             stream.stop_stream()
             stream.close()
         p.terminate()
+
+    # 4. Request a complete WAV response if your client needs a normal WAV file.
+    print("\n[Client] Step 4: Requesting complete WAV response...")
+    try:
+        response = requests.post(f"{BASE_URL}/tts/wav", json=tts_payload)
+        response.raise_for_status()
+        with open("genie_tts_response.wav", "wb") as f:
+            f.write(response.content)
+        print("[Client] WAV response saved to genie_tts_response.wav")
+    except requests.exceptions.RequestException as e:
+        print(f"[Client] WAV TTS request failed: {e}")
 
 
 if __name__ == "__main__":

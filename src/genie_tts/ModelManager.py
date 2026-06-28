@@ -7,6 +7,7 @@
 import gc
 import logging
 import os
+import sysconfig
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 
@@ -21,6 +22,50 @@ from .Utils.Utils import LRUCacheDict
 
 onnxruntime.set_default_logger_severity(3)
 logger = logging.getLogger(__name__)
+_CUDA_DLL_DIR_HANDLES: List[object] = []
+
+
+def _session_providers(session: Optional[InferenceSession]) -> Optional[List[str]]:
+    if session is None:
+        return None
+    return session.get_providers()
+
+
+def _preload_cuda_runtime() -> None:
+    purelib = sysconfig.get_paths().get("purelib")
+    if purelib:
+        nvidia_root = os.path.join(purelib, "nvidia")
+        if os.path.isdir(nvidia_root):
+            path_parts = os.environ.get("PATH", "").split(os.pathsep)
+            normalized_path_parts = {os.path.normcase(os.path.normpath(part)) for part in path_parts if part}
+            for package_name in sorted(os.listdir(nvidia_root)):
+                bin_dir = os.path.join(nvidia_root, package_name, "bin")
+                if not os.path.isdir(bin_dir):
+                    continue
+                normalized_bin_dir = os.path.normcase(os.path.normpath(bin_dir))
+                if normalized_bin_dir not in normalized_path_parts:
+                    path_parts.insert(0, bin_dir)
+                    normalized_path_parts.add(normalized_bin_dir)
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        _CUDA_DLL_DIR_HANDLES.append(os.add_dll_directory(bin_dir))
+                    except OSError as e:
+                        logger.warning("Failed to add CUDA DLL directory %s: %s", bin_dir, e)
+            os.environ["PATH"] = os.pathsep.join(path_parts)
+
+    preload_dlls = getattr(onnxruntime, "preload_dlls", None)
+    if preload_dlls is None:
+        return
+    try:
+        preload_dlls()
+    except Exception as e:
+        logger.warning("Failed to preload ONNX Runtime CUDA DLLs: %s", e)
+
+
+def create_session_options() -> onnxruntime.SessionOptions:
+    sess_options = onnxruntime.SessionOptions()
+    sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+    return sess_options
 
 
 class GSVModelFile:
@@ -187,6 +232,7 @@ class ModelManager:
         self.character_to_language: Dict[str, str] = {}
         self.character_model_paths: Dict[str, str] = {}
         self.providers = ["CPUExecutionProvider"]
+        self._runtime_mode: str = "cpu"
 
         self.cn_hubert: Optional[InferenceSession] = None
         self.speaker_verification_model: Optional[InferenceSession] = None
@@ -211,6 +257,7 @@ class ModelManager:
             self.roberta_model = onnxruntime.InferenceSession(
                 model_path,
                 providers=self.providers,
+                sess_options=create_session_options(),
             )
             self.roberta_tokenizer = Tokenizer.from_file(tokenizer_path)
             logger.info("Successfully loaded RoBERTa model from %s", model_path)
@@ -229,6 +276,7 @@ class ModelManager:
             self.speaker_verification_model = onnxruntime.InferenceSession(
                 model_path,
                 providers=self.providers,
+                sess_options=create_session_options(),
             )
             logger.info(f"Successfully loaded Speaker Verification model.")
             return True
@@ -248,12 +296,14 @@ class ModelManager:
                 self.cn_hubert = load_session_with_fp16_conversion(
                     model_path,
                     GSVModelFile.HUBERT_MODEL_WEIGHT_FP16,
-                    self.providers
+                    self.providers,
+                    create_session_options(),
                 )
             else:
                 self.cn_hubert = onnxruntime.InferenceSession(
                     model_path,
                     providers=self.providers,
+                    sess_options=create_session_options(),
                 )
             logger.info("Successfully loaded CN_HuBERT model.")
             return True
@@ -336,9 +386,7 @@ class ModelManager:
             for model_file in model_files_to_load:
                 model_path = os.path.normpath(os.path.join(model_dir, model_file))
 
-                # 设置 Session Options
-                sess_options = onnxruntime.SessionOptions()
-                sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+                sess_options = create_session_options()
 
                 if os.path.exists(model_path):
                     fp16_bin_name = onnx_to_fp16_map.get(model_file)
@@ -389,6 +437,89 @@ class ModelManager:
             del self.character_to_model[character_name]
             gc.collect()
             logger.info(f"Character {character_name.capitalize()} removed successfully.")
+
+    def configure_runtime(self, mode: str = "cpu") -> dict:
+        """Configure the ONNX Runtime execution provider.
+
+        This should be called before loading any character models. Sessions
+        already loaded will retain their original providers until reloaded.
+
+        Args:
+            mode: One of 'cpu', 'cuda', 'directml', 'auto'.
+
+        Returns:
+            dict with mode and effective providers list.
+
+        Raises:
+            ValueError: If mode is not one of the supported values.
+        """
+        mode = mode.lower().strip()
+        if mode in {"cuda", "auto"}:
+            _preload_cuda_runtime()
+        available = onnxruntime.get_available_providers()
+
+        if mode == "cpu":
+            self.providers = ["CPUExecutionProvider"]
+        elif mode == "cuda":
+            if "CUDAExecutionProvider" in available:
+                self.providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            else:
+                logger.warning(
+                    "CUDAExecutionProvider not available in the current ONNX Runtime "
+                    "installation. Falling back to CPU. Install onnxruntime-gpu to "
+                    "enable CUDA support."
+                )
+                self.providers = ["CPUExecutionProvider"]
+        elif mode == "directml":
+            if "DmlExecutionProvider" in available:
+                self.providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+            else:
+                logger.warning(
+                    "DmlExecutionProvider not available in the current ONNX Runtime "
+                    "installation. Falling back to CPU. Install onnxruntime-directml to "
+                    "enable DirectML support."
+                )
+                self.providers = ["CPUExecutionProvider"]
+        elif mode == "auto":
+            preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
+            self.providers = [p for p in preferred if p in available] or ["CPUExecutionProvider"]
+        else:
+            raise ValueError(
+                f"Unknown runtime mode: {mode!r}. Supported modes: cpu, cuda, directml, auto"
+            )
+
+        self._runtime_mode = mode
+        logger.info(
+            "Runtime configured: requested=%s, effective_providers=%s",
+            mode, self.providers,
+        )
+        return {"mode": mode, "providers": self.providers}
+
+    def get_runtime_info(self) -> dict:
+        """Return current runtime status information."""
+        loaded_models = {
+            character_name: {
+                model_name: _session_providers(session)
+                for model_name, session in model_map.items()
+            }
+            for character_name, model_map in self.character_to_model.items()
+        }
+        return {
+            "onnxruntime_version": onnxruntime.__version__,
+            "runtime_mode": self._runtime_mode,
+            "selected_provider": self.providers[0] if self.providers else None,
+            "selected_providers": self.providers,
+            "available_providers": onnxruntime.get_available_providers(),
+            "loaded_characters": list(self.character_to_model.keys()),
+            "registered_characters": list(self.character_model_paths.keys()),
+            "character_languages": dict(self.character_to_language),
+            "loaded_models": loaded_models,
+            "shared_models": {
+                "cn_hubert": _session_providers(self.cn_hubert),
+                "speaker_verification": _session_providers(self.speaker_verification_model),
+                "roberta": _session_providers(self.roberta_model),
+            },
+        }
 
 
 model_manager: ModelManager = ModelManager()

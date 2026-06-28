@@ -188,6 +188,9 @@ def set_reference_audio(
         prompt_text=audio_text,
         language=language,
     )
+    gsv_model = model_manager.get(character_name)
+    if gsv_model and gsv_model.PROMPT_ENCODER:
+        context.current_prompt_audio.update_global_emb(gsv_model.PROMPT_ENCODER)
 
 
 async def tts_async(
@@ -362,6 +365,39 @@ def clear_reference_audio_cache() -> None:
     Clears the cache of reference audio data.
     """
     ReferenceAudio.clear_cache()
+
+
+def configure_runtime(mode: str = "cpu") -> dict:
+    """
+    Configure the ONNX Runtime execution backend.
+
+    This should be called before loading any character models, as sessions
+    already loaded will retain their original providers until reloaded.
+
+    Args:
+        mode (str): One of ``'cpu'``, ``'cuda'``, ``'directml'``, ``'auto'``.
+
+    Returns:
+        dict: A dictionary containing the requested mode and the list of
+        effective execution providers.
+
+    Raises:
+        ValueError: If *mode* is not one of the supported values.
+    """
+    return model_manager.configure_runtime(mode)
+
+
+def get_runtime_info() -> dict:
+    """
+    Return information about the current ONNX Runtime environment.
+
+    Returns:
+        dict: A dictionary containing ``onnxruntime_version``,
+        ``runtime_mode``, ``selected_providers``, ``available_providers``,
+        ``loaded_characters``, ``registered_characters``,
+        ``character_languages``, ``loaded_models`` and ``shared_models``.
+    """
+    return model_manager.get_runtime_info()
 
 
 def load_predefined_character(character_name: str) -> None:

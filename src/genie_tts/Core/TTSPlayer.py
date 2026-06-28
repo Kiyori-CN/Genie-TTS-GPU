@@ -12,6 +12,7 @@ import logging
 from ..Utils.TextSplitter import TextSplitter
 from ..Core.Inference import tts_client
 from ..ModelManager import model_manager
+from ..Profiling import profile_span
 from ..Utils.Shared import context
 from ..Utils.Utils import clear_queue
 
@@ -46,11 +47,92 @@ class TTSPlayer:
         self._split: bool = False
 
         self._chunk_callback: Optional[Callable[[Optional[bytes]], None]] = None
+        self._target_rms: float = 10 ** (-23.0 / 20.0)
+        self._max_gain: float = 1.55
+        self._min_gain: float = 0.65
+        self._final_max_gain: float = 1.15
+        self._final_min_gain: float = 0.85
+        self._peak_limit: float = 0.92
+        self._silence_rms: float = 10 ** (-45.0 / 20.0)
+        self._loudness_window_samples: int = int(0.25 * self.sample_rate)
+        self._loudness_hop_samples: int = int(0.05 * self.sample_rate)
+        self._tail_silence_samples: int = int(0.16 * self.sample_rate)
+        self._session_active: bool = False
 
     @staticmethod
     def _preprocess_for_playback(audio_float: np.ndarray) -> bytes:
-        audio_int16 = (audio_float.squeeze() * 32767).astype(np.int16)
+        audio_int16 = (np.clip(audio_float.squeeze(), -1.0, 1.0) * 32767).astype(np.int16)
         return audio_int16.tobytes()
+
+    def _build_loudness_envelope(self, audio: np.ndarray) -> np.ndarray:
+        if audio.size <= self._loudness_hop_samples:
+            return np.ones(audio.size, dtype=np.float32)
+
+        window = max(1, min(self._loudness_window_samples, audio.size))
+        hop = max(1, self._loudness_hop_samples)
+        starts = list(range(0, audio.size, hop))
+        frame_gains: List[float] = []
+        centers: List[float] = []
+
+        for start in starts:
+            stop = min(start + window, audio.size)
+            frame = audio[start:stop]
+            if frame.size == 0:
+                continue
+            rms = float(np.sqrt(np.mean(frame * frame)) + 1e-12)
+            if rms < self._silence_rms:
+                gain = 1.0
+            else:
+                gain = float(np.clip(self._target_rms / rms, self._min_gain, self._max_gain))
+            frame_gains.append(gain)
+            centers.append(start + 0.5 * (stop - start))
+
+        if not frame_gains:
+            return np.ones(audio.size, dtype=np.float32)
+
+        smoothed = np.asarray(frame_gains, dtype=np.float32)
+        for i in range(1, smoothed.size):
+            previous = float(smoothed[i - 1])
+            desired = float(smoothed[i])
+            alpha = 0.55 if desired < previous else 0.18
+            smoothed[i] = previous + alpha * (desired - previous)
+
+        positions = np.arange(audio.size, dtype=np.float32)
+        return np.interp(
+            positions,
+            np.asarray(centers, dtype=np.float32),
+            smoothed,
+            left=float(smoothed[0]),
+            right=float(smoothed[-1]),
+        ).astype(np.float32)
+
+    def _prepare_audio_chunk(self, audio_float: np.ndarray) -> np.ndarray:
+        audio = np.asarray(audio_float, dtype=np.float32).squeeze()
+        if audio.ndim != 1:
+            audio = audio.reshape(-1)
+        if audio.size == 0:
+            return audio
+
+        audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+        audio = audio * self._build_loudness_envelope(audio)
+
+        active = np.abs(audio) > 1e-4
+        if np.count_nonzero(active) > int(0.08 * self.sample_rate):
+            rms = float(np.sqrt(np.mean(audio[active] * audio[active])) + 1e-12)
+            gain = float(np.clip(self._target_rms / rms, self._final_min_gain, self._final_max_gain))
+            audio = audio * gain
+
+        peak = float(np.max(np.abs(audio)))
+        if peak > self._peak_limit:
+            audio = audio * (self._peak_limit / peak)
+
+        if self._tail_silence_samples > 0:
+            audio = np.concatenate([
+                audio,
+                np.zeros(self._tail_silence_samples, dtype=np.float32),
+            ])
+
+        return audio.astype(np.float32, copy=False)
 
     def _tts_worker_loop(self):
         """从文本队列取句子，生成音频，并通过回调函数或音频队列分发。"""
@@ -76,6 +158,7 @@ class TTSPlayer:
                         self._audio_queue.put(AUDIO_STREAM_END)
 
                     self._tts_done_event.set()
+                    self._session_active = False
                     continue
 
                 gsv_model = model_manager.get(context.current_speaker)
@@ -84,18 +167,22 @@ class TTSPlayer:
                     continue
 
                 tts_client.stop_event.clear()
-                audio_chunk = tts_client.tts(
-                    text=sentence,
-                    prompt_audio=context.current_prompt_audio,
-                    encoder=gsv_model.T2S_ENCODER,
-                    first_stage_decoder=gsv_model.T2S_FIRST_STAGE_DECODER,
-                    stage_decoder=gsv_model.T2S_STAGE_DECODER,
-                    vocoder=gsv_model.VITS,
-                    prompt_encoder=gsv_model.PROMPT_ENCODER,
-                    language=gsv_model.LANGUAGE,
-                )
+                with profile_span("sentence_tts_total", language=gsv_model.LANGUAGE, text_chars=len(sentence)):
+                    audio_chunk = tts_client.tts(
+                        text=sentence,
+                        prompt_audio=context.current_prompt_audio,
+                        encoder=gsv_model.T2S_ENCODER,
+                        first_stage_decoder=gsv_model.T2S_FIRST_STAGE_DECODER,
+                        stage_decoder=gsv_model.T2S_STAGE_DECODER,
+                        vocoder=gsv_model.VITS,
+                        prompt_encoder=gsv_model.PROMPT_ENCODER,
+                        language=gsv_model.LANGUAGE,
+                    )
 
                 if audio_chunk is not None:
+                    with profile_span("audio_postprocess", samples=int(np.asarray(audio_chunk).size)):
+                        audio_chunk = self._prepare_audio_chunk(audio_chunk)
+
                     if self._play:
                         self._audio_queue.put(audio_chunk)
                     if self._current_save_path:
@@ -103,7 +190,8 @@ class TTSPlayer:
 
                     # 使用回调函数处理流式数据
                     if self._chunk_callback:
-                        audio_data = self._preprocess_for_playback(audio_chunk)
+                        with profile_span("audio_pcm_encode", samples=int(np.asarray(audio_chunk).size)):
+                            audio_data = self._preprocess_for_playback(audio_chunk)
                         self._chunk_callback(audio_data)
 
             except Exception as e:
@@ -112,6 +200,7 @@ class TTSPlayer:
                 if self._chunk_callback:
                     self._chunk_callback(None)
                 self._tts_done_event.set()
+                self._session_active = False
 
     def _playback_worker_loop(self):
         try:
@@ -148,12 +237,13 @@ class TTSPlayer:
 
     def _save_session_audio(self):
         try:
-            full_audio = np.concatenate(self._session_audio_chunks, axis=0)
-            with wave.open(self._current_save_path, 'wb') as wf:
-                wf.setnchannels(self.channels)
-                wf.setsampwidth(self.bytes_per_sample)
-                wf.setframerate(self.sample_rate)
-                wf.writeframes(self._preprocess_for_playback(full_audio))
+            with profile_span("wav_save", chunks=len(self._session_audio_chunks)):
+                full_audio = np.concatenate(self._session_audio_chunks, axis=0)
+                with wave.open(self._current_save_path, 'wb') as wf:
+                    wf.setnchannels(self.channels)
+                    wf.setsampwidth(self.bytes_per_sample)
+                    wf.setframerate(self.sample_rate)
+                    wf.writeframes(self._preprocess_for_playback(full_audio))
             logger.info(f"Audio successfully saved to {os.path.abspath(self._current_save_path)}")
         except Exception as e:
             logger.error(f"Failed to save audio: {e}")
@@ -166,9 +256,13 @@ class TTSPlayer:
             play: bool = False,
             split: bool = False,
             save_path: Optional[str] = None,
-            chunk_callback: Optional[Callable[[Optional[bytes]], None]] = None
+            chunk_callback: Optional[Callable[[Optional[bytes]], None]] = None,
+            reserved_session: bool = False,
     ):
         with self._api_lock:
+            if self._session_active and not reserved_session:
+                raise RuntimeError("A TTS session is already active.")
+
             self._tts_done_event.clear()
             self._playback_done_event.clear()  # 新增：重置播放完成事件
             self._chunk_callback = chunk_callback
@@ -189,13 +283,25 @@ class TTSPlayer:
             self._split = split
             self._current_save_path = save_path
             self._session_audio_chunks = []
+            self._session_active = True
+
+    def reserve_session(self) -> None:
+        with self._api_lock:
+            if self._session_active:
+                raise RuntimeError("A TTS session is already active.")
+            self._session_active = True
+
+    def release_session(self) -> None:
+        with self._api_lock:
+            self._session_active = False
 
     def feed(self, text_chunk: str):
         with self._api_lock:
             if not text_chunk:
                 return
             if self._split:
-                sentences = self._text_splitter.split(text_chunk.strip())
+                with profile_span("text_split", text_chars=len(text_chunk)):
+                    sentences = self._text_splitter.split(text_chunk.strip())
                 for sentence in sentences:
                     self._text_queue.put(sentence)
             else:
@@ -214,6 +320,7 @@ class TTSPlayer:
             tts_client.stop_event.set()
             self._stop_event.set()
             self._tts_done_event.set()
+            self._session_active = False
             self._text_queue.put(None)
             self._audio_queue.put(None)
             if self._tts_worker and self._tts_worker.is_alive():

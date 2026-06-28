@@ -203,7 +203,16 @@ genie.start_server(
 )
 ```
 
-> 关于请求格式和 API 详情，请参阅我们的 [API 服务教程](./Tutorial/English/API%20Server%20Tutorial.py)。
+对于本仓库的 Windows 整合包，优先使用包内启动脚本：
+
+```powershell
+E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 127.0.0.1 -Port 8000
+```
+
+如果需要局域网访问，使用 `-HostName 0.0.0.0`。请求格式、raw PCM/WAV
+差异、错误码、客户端示例、验证和 profiling 说明见
+[API Service](./Docs/API-Service.md)。纯标准库 Python 客户端示例见
+[Examples/api_client.py](./Examples/api_client.py)。
 
 
 ---

@@ -9,6 +9,8 @@ from .Internal import (
     clear_reference_audio_cache,
     load_predefined_character,
     wait_for_playback_done,
+    configure_runtime,
+    get_runtime_info,
 )
 from .Server import start_server
 from .Core.Resources import download_genie_data, download_roberta_data
@@ -25,6 +27,8 @@ __all__ = [
     "start_server",
     "load_predefined_character",
     "wait_for_playback_done",
+    "configure_runtime",
+    "get_runtime_info",
     'download_genie_data',
     'download_roberta_data',
 ]
