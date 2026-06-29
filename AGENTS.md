@@ -124,6 +124,9 @@ Important source files:
   WAV paths plus `/status` diagnostics.
 - `Scripts\verify-job-api.ps1`: validates long-form job submit/poll/download WAV
   behavior.
+- `Scripts\verify-chinese-listening-baseline.ps1`: generates multiple Chinese
+  long-form listening samples, records runtime/status/provider metadata, and
+  writes a review report plus optional WAV outputs for human listening checks.
 - `Scripts\profile-internal-api.ps1`: optional local profiling harness.
 
 Important local package artifacts, normally ignored by git:
@@ -303,6 +306,7 @@ E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m pip check
 E:\Genie-TTS\Scripts\verify-internal-api.ps1 -Runtime cuda
 E:\Genie-TTS\Scripts\verify-legado-stream-api.ps1 -Runtime cuda
 E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
+E:\Genie-TTS\Scripts\verify-chinese-listening-baseline.ps1 -Runtime cuda
 ```
 
 Provider check:
@@ -329,6 +333,13 @@ For default Chinese TTS validation, use `feibi`, a longer Chinese text passage,
 and `split_sentence=true`. Save generated files under `test` only as temporary
 validation artifacts, then clean them unless they are intentionally kept for a
 specific comparison.
+
+For Chinese listening-quality closure, use
+`Scripts\verify-chinese-listening-baseline.ps1 -Runtime cuda` after the core
+runtime/API checks. The script defaults to buffered Legado WAV samples and keeps
+outputs for human review unless `-CleanOutputs` is passed. Use `-IncludeStream`
+and `-IncludeJob` when stream and queued long-form paths also need a review
+sample.
 
 For GPU validation, additionally verify:
 

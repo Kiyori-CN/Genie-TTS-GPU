@@ -145,6 +145,10 @@ full request text. It reports text length and a short content hash instead.
   stream and buffered modes plus `/status` diagnostics.
 - `Scripts\verify-job-api.ps1`: verifies queued job submission, polling,
   download, WAV structure, and provider reporting.
+- `Scripts\verify-chinese-listening-baseline.ps1`: focused Chinese long-form
+  listening baseline harness. It generates multiple buffered Legado samples,
+  can optionally cover stream and job paths, records `/status` and `/runtime`
+  evidence, and writes a JSON report for human listening review.
 - `Scripts\profile-internal-api.ps1`: optional profiling harness for raw or WAV
   endpoints with warm-up/measurement runs and a JSON report.
 

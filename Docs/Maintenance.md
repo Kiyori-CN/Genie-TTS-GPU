@@ -47,6 +47,21 @@ E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
 Use `-Runtime cpu` separately when a change could affect CPU fallback. Do not
 present a CUDA-only pass as proof that CPU fallback remains healthy.
 
+For Chinese listening-quality baseline work, run the focused listening harness
+after the runtime/API chain is green:
+
+```powershell
+E:\Genie-TTS\Scripts\verify-chinese-listening-baseline.ps1 -Runtime cuda
+```
+
+This starts a temporary package-local API server, uses the default `feibi`
+Chinese character, generates multiple longer Chinese buffered Legado WAV files,
+checks `/status`, checks `/runtime` session providers, and writes a JSON report
+plus WAV files under `test\chinese-listening-baseline-*` for listening review.
+Use `-IncludeStream` to also sample the chunked WAV path, `-IncludeJob` to add a
+combined long-form job API sample, and `-CleanOutputs` when you only want the
+machine checks and do not need audio files for review.
+
 ## Runtime Health Checklist
 
 When reporting runtime health, separate these states:
@@ -176,6 +191,56 @@ file was removed.
 Treat machine validation as structural/runtime proof only. Chinese pronunciation,
 prosody, sentence segmentation, and content completeness still require listening
 or another audio-content inspection workflow.
+
+## Chinese Listening Acceptance Flow
+
+Use this flow before changing decoder loops, ONNX Runtime IO Binding, batching,
+sentence splitting, or other inference-core behavior for Chinese long-form
+listening:
+
+1. Run the full runtime/API baseline for the relevant runtime mode.
+2. Run `Scripts\verify-chinese-listening-baseline.ps1 -Runtime cuda`.
+3. Open the generated `chinese-listening-baseline-report.json` and verify that
+   `selected_providers`, `loaded_models`, `shared_models`, `/status`, and WAV
+   metadata match the expected runtime and audio format.
+4. Listen to each generated buffered Legado WAV from the report's `samples`
+   list. Machine checks do not validate spoken content.
+5. Record the listening result before treating the baseline as acceptable.
+
+Suggested review fields:
+
+```text
+Date:
+Reviewer:
+Runtime:
+Report path:
+Character:
+Reference audio:
+Device/client used for playback:
+
+Overall result: pass / needs_fix / blocked
+
+Per sample:
+- sample id:
+- output path:
+- content completeness: pass / issue
+- pronunciation/tone: pass / issue
+- sentence splitting and pauses: pass / issue
+- repeats, omissions, or early stop: none / present
+- notes:
+
+Legado buffered real-device result:
+- endpoint: /tts/legado.wav?wait_timeout=300&mode=buffered
+- plays to completion: yes / no / not tested
+- interruption or buffering issue:
+
+Follow-up decision:
+- keep baseline / adjust validation text / fix API or status reporting / investigate Chinese inference
+```
+
+Keep generated listening WAV files only when they are intentionally needed for
+review or comparison. They remain runtime artifacts under `test\` and should not
+be staged.
 
 ## Release/Push Checklist
 
