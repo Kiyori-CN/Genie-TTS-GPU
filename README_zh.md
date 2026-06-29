@@ -1,236 +1,161 @@
-<div align="center">
-<pre>
-██████╗  ███████╗███╗   ██╗██╗███████╗
-██╔════╝ ██╔════╝████╗  ██║██║██╔════╝
-██║  ███╗█████╗  ██╔██╗ ██║██║█████╗  
-██║   ██║██╔══╝  ██║╚██╗██║██║██╔══╝  
-╚██████╔╝███████╗██║ ╚████║██║███████╗
- ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
-</pre>
-</div>
-
-<div align="center">
-
-# 🔮 GENIE: [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 轻量级推理引擎
-
-**在 CPU 上体验近乎即时的语音合成**
+# Genie-TTS Windows 整合包
 
 [简体中文](./README_zh.md) | [English](./README.md)
 
-</div>
+本仓库维护的是位于 `E:\Genie-TTS` 的自包含 Genie-TTS CPU/GPU Windows 整合包。它不只是源码目录：正常形态下，这个目录应同时携带包内 Python 运行时、虚拟环境、ONNX Runtime CPU/GPU 包、包内 CUDA/cuDNN 用户态 DLL、模型资源、API 服务脚本、示例和验证工具。
 
----
+当前产品目标是一个可本机或局域网调用的 FastAPI TTS 服务，用于有声书、小说、文档朗读等长时间听书场景。CPU 推理必须持续作为 fallback 可用；CUDA 推理由包内 ONNX Runtime execution provider 选择和加载。
 
-**GENIE** 是一个基于开源 TTS 项目 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 构建的轻量级推理引擎。它集成了 TTS
-推理、ONNX 模型转换、API 服务端以及其他核心功能，旨在提供极致的性能和便利性。
+当前阅读器结论：`/tts/legado.wav` 的 `mode=buffered` 是 Android/Legado 稳定听书路径；`mode=stream` 保留为低延迟实验路径，以及给能正确处理 chunked WAV 的客户端使用。
 
-* **✅ 支持的模型版本：** GPT-SoVITS V2, V2ProPlus
-* **✅ 支持的语言：** 日语、英语、中文、韩语
-* **✅ 支持的 Python 版本：** >= 3.9
+## 包内运行规则
 
----
+- 验证和本地工具统一使用 `E:\Genie-TTS\Runtime\.venv\Scripts\python.exe`。
+- 正常运行不要依赖系统 Python、全局 pip、全局 CUDA Toolkit、用户 `PATH` 或机器级环境变量。
+- 不要把 `Runtime`、`GenieData`、`CharacterModels`、`test`、`UserData` 加入 git；这些是包内运行时、模型或输出产物。
+- CUDA 支持应来自包内运行时和包内 NVIDIA wheel DLL；NVIDIA 显卡驱动和 Windows 系统 DLL 属于系统/驱动边界。
+- 不要仅因为 `CUDAExecutionProvider` 出现在 available providers 中就宣称 GPU TTS 完成。必须看 `/runtime` 中各个已加载 ONNX session 的实际 provider 列表。
 
-## 🎬 演示视频
+## 快速开始
 
-- **[➡️ 观看演示视频（中文）](https://www.bilibili.com/video/BV1d2hHzJEz9)**
-
----
-
-## 🚀 性能优势
-
-GENIE 针对原始模型进行了优化，以实现出色的 CPU 性能。
-
-| 特性         |  🔮 GENIE   | 官方 PyTorch 模型 | 官方 ONNX 模型 |
-|:-----------|:-----------:|:-------------:|:----------:|
-| **首次推理延迟** |  **1.13s**  |     1.35s     |   3.57s    |
-| **运行时大小**  | **\~200MB** |    \~数 GB     | 与 GENIE 相似 |
-| **模型大小**   | **\~230MB** |  与 GENIE 相似   |  \~750MB   |
-
-> 📝 **延迟测试说明：** 所有延迟数据均基于 100 个日语句子（每句约 20 个字符）的测试集取平均值。测试环境为 CPU i7-13620H。
-
----
-
-## 🏁 快速开始
-
-> **⚠️ 重要提示：** 建议在 **管理员模式** 下运行 GENIE，以避免潜在的性能下降。
-
-### 📦 安装
-
-通过 pip 安装：
-
-```bash
-pip install genie-tts
-```
-
-## 📥 预训练模型
-
-首次运行 GENIE 时，需要下载资源文件（**~391MB**）。您可以按照库的提示自动下载。
-
-> 或者，您可以从 [HuggingFace](https://huggingface.co/High-Logic/Genie/tree/main/GenieData) 手动下载文件并将其放置在本地文件夹中。然后在导入库
-**之前** 设置 `GENIE_DATA_DIR` 环境变量：
-
-```python
-import os
-
-# 设置手动下载的资源文件路径
-# 注意：请在导入 genie_tts 之前执行此操作
-os.environ["GENIE_DATA_DIR"] = r"C:\path\to\your\GenieData"
-
-import genie_tts as genie
-
-# 库现在将从指定目录加载资源
-```
-
-如果你想启用**仅用于中文推理**、用于改善中文韵律的可选 Chinese RoBERTa 文本特征，也可以这样下载：
-
-```python
-import genie_tts as genie
-
-# 只下载可选的 Chinese RoBERTa 资源
-genie.download_roberta_data()
-
-# 或者直接走内置的完整资源下载流程，
-# 该流程现在也会顺带下载可选的 Chinese RoBERTa 资源
-genie.download_genie_data()
-```
-
-这些 RoBERTa 特征仅用于**中文**路径，以改善中文韵律；
-它们**不应该用于**日语 / 英语 / 韩语推理。
-
-### ⚡️ 快速试用
-
-还没有 GPT-SoVITS 模型？没问题！
-GENIE 包含几个预定义的说话人角色，您可以立即使用 —— 例如：
-
-* **Mika (聖園ミカ)** — *蔚蓝档案 (Blue Archive)* (日语)
-* **ThirtySeven (37)** — *重返未来：1999 (Reverse: 1999)* (英语)
-* **Feibi (菲比)** — *鸣潮 (Wuthering Waves)* (中文)
-
-您可以在此处浏览所有可用角色：
-**[https://huggingface.co/High-Logic/Genie/tree/main/CharacterModels](
-https://huggingface.co/High-Logic/Genie/tree/main/CharacterModels)**
-
-使用以下示例进行尝试：
-
-```python
-import genie_tts as genie
-import time
-
-# 首次运行时自动下载所需文件
-genie.load_predefined_character('mika')
-
-genie.tts(
-    character_name='mika',
-    text='どうしようかな……やっぱりやりたいかも……！',
-    play=True,  # 直接播放生成的音频
-)
-
-genie.wait_for_playback_done()  # 确保音频播放完成
-```
-
-### 🎤 TTS 最佳实践
-
-一个简单的 TTS 推理示例：
-
-```python
-import genie_tts as genie
-
-# 第一步：加载角色语音模型
-genie.load_character(
-    character_name='<CHARACTER_NAME>',  # 替换为您的角色名称
-    onnx_model_dir=r"<PATH_TO_CHARACTER_ONNX_MODEL_DIR>",  # 包含 ONNX 模型的文件夹
-    language='<LANGUAGE_CODE>',  # 替换为语言代码，例如 'en', 'zh', 'jp', 'kr'
-)
-
-# 第二步：设置参考音频（用于情感和语调克隆）
-genie.set_reference_audio(
-    character_name='<CHARACTER_NAME>',  # 必须与加载的角色名称匹配
-    audio_path=r"<PATH_TO_REFERENCE_AUDIO>",  # 参考音频的路径
-    audio_text="<REFERENCE_AUDIO_TEXT>",  # 对应的文本
-)
-
-# 第三步：运行 TTS 推理并生成音频
-genie.tts(
-    character_name='<CHARACTER_NAME>',  # 必须与加载的角色匹配
-    text="<TEXT_TO_SYNTHESIZE>",  # 要合成的文本
-    play=True,  # 直接播放音频
-    save_path="<OUTPUT_AUDIO_PATH>",  # 输出音频文件路径
-)
-
-genie.wait_for_playback_done()  # 确保音频播放完成
-
-print("🎉 Audio generation complete!")
-```
-
----
-
-## 🔧 模型转换
-
-要将原始 GPT-SoVITS 模型转换为 GENIE 格式，请确保已安装 `torch`：
-
-```bash
-pip install torch
-```
-
-使用内置的转换工具：
-
-> **提示：** `convert_to_onnx` 目前支持 V2 和 V2ProPlus 模型。
-
-```python
-import genie_tts as genie
-
-genie.convert_to_onnx(
-    torch_pth_path=r"<YOUR .PTH MODEL FILE>",  # 替换为您的 .pth 文件
-    torch_ckpt_path=r"<YOUR .CKPT CHECKPOINT FILE>",  # 替换为您的 .ckpt 文件
-    output_dir=r"<ONNX MODEL OUTPUT DIRECTORY>"  # 保存 ONNX 模型的目录
-)
-```
-
----
-
-## 🌐 启动 FastAPI 服务
-
-GENIE 包含一个轻量级的 FastAPI 服务器：
-
-```python
-import genie_tts as genie
-
-# 启动服务
-genie.start_server(
-    host="0.0.0.0",  # 主机地址
-    port=8000,  # 端口
-    workers=1  # 工作进程数
-)
-```
-
-对于本仓库的 Windows 整合包，优先使用包内启动脚本：
+启动本机 CUDA API：
 
 ```powershell
 E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 127.0.0.1 -Port 8000
 ```
 
-如果需要局域网访问，使用 `-HostName 0.0.0.0`。请求格式、raw PCM/WAV
-差异、错误码、客户端示例、验证和 profiling 说明见
-[API Service](./Docs/API-Service.md)。纯标准库 Python 客户端示例见
-[Examples/api_client.py](./Examples/api_client.py)。
+启动局域网可访问 CUDA API：
 
+```powershell
+E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 0.0.0.0 -Port 8000
+```
 
----
+CPU fallback 使用 `-Runtime cpu`。运行时模式应在加载角色模型前选择。
 
-## 📝 路线图
+加载默认中文验证角色 `feibi`：
 
-* [x] **🌐 语言扩展**
+```powershell
+$base = 'http://127.0.0.1:8000'
+$loadBody = @{
+    character_name = 'feibi'
+    onnx_model_dir = 'E:\Genie-TTS\CharacterModels\v2ProPlus\feibi\tts_models'
+    language = 'Chinese'
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "$base/load_character" -Method Post -ContentType 'application/json' -Body $loadBody
+```
 
-    * [x] 添加对 **中文** 和 **英文** 的支持。
+设置参考音频：
 
-* [x] **🚀 模型兼容性**
+```powershell
+$referenceBody = @{
+    character_name = 'feibi'
+    audio_path = 'E:\Genie-TTS\CharacterModels\v2ProPlus\feibi\prompt_wav\zh_vo_Main_Linaxita_2_1_10_26.wav'
+    audio_text = '在此之前，请您务必继续享受旅居拉古那的时光。'
+    language = 'Chinese'
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "$base/set_reference_audio" -Method Post -ContentType 'application/json' -Body $referenceBody
+```
 
-    * [x] 支持 `V2ProPlus`。
-    * [ ] 支持 `V3`、`V4` 等更多版本。
+通过 Legado 兼容端点生成完整 buffered WAV：
 
-* [x] **📦 简易部署**
+```powershell
+New-Item -ItemType Directory -Force -Path E:\Genie-TTS\test | Out-Null
+$ttsBody = @{
+    character_name = 'feibi'
+    text = '清晨的城市逐渐苏醒，街边的灯光还没有完全熄灭。她合上手里的书，抬头望向窗外，决定把今天的计划重新整理一遍。'
+    split_sentence = $true
+} | ConvertTo-Json
+Invoke-WebRequest -Uri "$base/tts/legado.wav?wait_timeout=300&mode=buffered" -Method Post -ContentType 'application/json' -Body $ttsBody -OutFile E:\Genie-TTS\test\feibi-legado-buffered.wav
+```
 
-    * [ ] 发布 **官方 Docker 镜像**。
-    * [x] 提供开箱即用的 **Windows 整合包**。
+Android/Legado 使用时，先用 `-HostName 0.0.0.0` 启动服务，再替换 `Examples\legado_http_tts_buffered.json` 里的示例 IP，并优先使用 `/tts/legado.wav?wait_timeout=300&mode=buffered`。非 buffered 的 `/tts/legado.wav?wait_timeout=300` 会返回 chunked WAV，更适合低延迟测试或兼容该格式的播放器。
 
----
+机器验证只能证明 API 行为、WAV 结构和 runtime/provider 状态正常；不能证明中文发音、断句和内容完整性正确。生成的中文音频仍需要用户试听或通过其他音频内容检查确认。
+
+## 主要端点
+
+| 端点 | 用途 |
+| --- | --- |
+| `GET /health` | 进程健康检查。 |
+| `GET /runtime` | ONNX Runtime 版本、选中 providers、可用 providers、已加载角色和实际 session providers。 |
+| `GET /status` | busy 状态、当前 TTS session、队列/运行中 job、最近 reader 请求诊断。 |
+| `POST /load_character` | 加载/注册 ONNX 角色模型。 |
+| `POST /set_reference_audio` | 为角色设置并预处理参考音频和文本。 |
+| `POST /tts` | raw PCM streaming 兼容别名。 |
+| `POST /tts/raw` | 低延迟 raw PCM S16LE 流。 |
+| `POST /tts/wav` | 推理完成后返回完整 WAV。 |
+| `GET/POST /tts/stream.wav` | 通用 WAV stream 端点。 |
+| `GET/POST /tts/legado.wav` | 阅读器/Legado 兼容 WAV 端点，支持 `mode=stream` 和 `mode=buffered`。 |
+| `POST /jobs/tts` | 提交长文本 TTS job，并通过 `/jobs` 轮询/下载。 |
+| `POST /stop` | 停止当前 TTS 任务。 |
+| `POST /clear_reference_audio_cache` | 清理参考音频预处理缓存。 |
+
+详细请求/响应合同见 [Docs/API-Service.md](./Docs/API-Service.md)。
+
+## 音频格式
+
+- Raw PCM：`POST /tts/raw` 返回 `application/octet-stream`，响应头包含 `X-Genie-Audio-Format: pcm_s16le`，音频为 32000 Hz、mono、16-bit little-endian PCM。
+- Stream WAV：`/tts/legado.wav` 或 `/tts/stream.wav` 的 `mode=stream` 会立即返回 `audio/wav`，先发送 WAV header，再通过 HTTP chunk 追加生成的 PCM。启动延迟更低，但部分 Android media stack 不接受响应开始时未知最终长度的 chunked WAV。
+- Buffered complete WAV：`/tts/legado.wav` 的 `mode=buffered` 会等待内存中合成完成，再返回普通完整 `audio/wav`。这是当前 Legado 稳定阅读模式。
+- Complete WAV：`POST /tts/wav` 同样返回完整 `audio/wav`，适合需要普通文件响应的客户端。
+
+## 验证命令
+
+文档或低风险维护改动后运行：
+
+```powershell
+git -C E:\Genie-TTS diff --check
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m compileall E:\Genie-TTS\src
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m py_compile "E:\Genie-TTS\Tutorial\English\API Server Tutorial.py" "E:\Genie-TTS\Examples\api_client.py" "E:\Genie-TTS\Examples\api_job_client.py"
+```
+
+声称 runtime 健康前运行：
+
+```powershell
+E:\Genie-TTS\Scripts\verify-internal-runtime.ps1
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m pip check
+```
+
+改动 API、server、runtime 或脚本后运行真实 HTTP 验证：
+
+```powershell
+E:\Genie-TTS\Scripts\verify-internal-api.ps1 -Runtime cuda
+E:\Genie-TTS\Scripts\verify-legado-stream-api.ps1 -Runtime cuda
+E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
+```
+
+验证脚本默认在 `test` 下创建临时文件，并会清理自己的输出，除非显式要求保留。不要删除历史测试产物，除非能证明它们是当前验证运行生成的。
+
+## 示例
+
+- `Examples\api_client.py`：加载 `feibi`、设置 reference、调用 `/tts/raw`、`/tts/legado.wav`、`/tts/legado.wav?mode=buffered` 和 `/tts/wav`。
+- `Examples\api_job_client.py`：提交 `/jobs/tts`、轮询 `/jobs/{job_id}`、下载 `/jobs/{job_id}/wav`。
+- `Examples\legado_http_tts.json`：Legado streaming WAV httpTTS 模板。
+- `Examples\legado_http_tts_buffered.json`：Legado buffered complete WAV httpTTS 模板，当前推荐给 Android/Legado 稳定阅读。
+
+对已经启动的本机服务运行示例客户端：
+
+```powershell
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe E:\Genie-TTS\Examples\api_client.py --base-url http://127.0.0.1:8000
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe E:\Genie-TTS\Examples\api_job_client.py --base-url http://127.0.0.1:8000
+```
+
+## 文档地图
+
+- [README.md](./README.md)：同一整合包的英文快速开始。
+- [Docs/API-Service.md](./Docs/API-Service.md)：详细 API 合同、端点语义、响应头、错误行为和客户端示例。
+- [Docs/Architecture.md](./Docs/Architecture.md)：当前模块边界、数据流和维护压力点。
+- [Docs/Maintenance.md](./Docs/Maintenance.md)：验证链、发布检查、故障排查和清理规则。
+- [AGENTS.md](./AGENTS.md)：未来 Codex/AI agent 在本仓库工作的执行准则。
+
+## 开发注意事项
+
+- `requirements.txt` 保持 CPU-friendly；包内 CUDA overlay 放在 `requirements-cuda.txt`。
+- 保留现有 endpoint，除非已在 `Docs/API-Service.md` 中记录兼容迁移。
+- 开发新功能时优先保持 CPU fallback、CUDA runtime 选择、`/runtime`、`/status`、job API 和 Legado buffered 兼容路径稳定。
+- 不要在缺少 CPU/GPU baseline 和真实 TTS correctness 证明时深改 decoder loop、ONNX Runtime IO Binding、batching 或推理核心。
+- 中文验证使用较长文本和 `split_sentence=true`。很短的短句不能覆盖听书/阅读路径。
+
+## 上游来源
+
+Genie-TTS 基于开源 GPT-SoVITS 生态，支持 GPT-SoVITS V2/V2ProPlus 风格 ONNX 模型，可用于日语、英语、中文和韩语推理。本仓库当前维护重点是本地 Windows 整合包，以及 API/runtime 的稳定性和可验证性，而不是通用 pip 安装包说明。

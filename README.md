@@ -1,5 +1,7 @@
 # Genie-TTS Windows Integration Package
 
+[简体中文](./README_zh.md) | [English](./README.md)
+
 This repository is maintained as a self-contained Genie-TTS CPU/GPU integration
 package under `E:\Genie-TTS`. It is not just a Python source checkout: the
 package is expected to carry its own Python runtime, virtual environment,
@@ -175,6 +177,8 @@ E:\Genie-TTS\Runtime\.venv\Scripts\python.exe E:\Genie-TTS\Examples\api_job_clie
 
 ## Documentation Map
 
+- [README_zh.md](./README_zh.md): Simplified Chinese quick start for the same
+  local integration package.
 - [Docs/API-Service.md](./Docs/API-Service.md): detailed API contract, endpoint
   semantics, headers, error behavior, and client examples.
 - [Docs/Architecture.md](./Docs/Architecture.md): current module boundaries,

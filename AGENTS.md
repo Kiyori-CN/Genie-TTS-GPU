@@ -231,6 +231,8 @@ Audio format rules:
 
 - `README.md` is the human quick-start and orientation document for this local
   integration package.
+- `README_zh.md` is the Simplified Chinese quick-start for the same local
+  integration package. Keep it semantically aligned with `README.md`.
 - `Docs\API-Service.md` is the detailed endpoint contract and should remain the
   source of truth for request/response semantics.
 - `Docs\Architecture.md` is the factual module-boundary and data-flow document.
