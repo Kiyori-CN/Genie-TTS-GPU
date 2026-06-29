@@ -52,6 +52,10 @@ Required capabilities:
 - External API supports local and LAN/remote callers through FastAPI.
 - Streaming TTS supports low-latency playback for listening/reading workflows.
 - Complete WAV response remains available for clients that need a normal file.
+- Legado/reader playback remains compatible through `/tts/legado.wav`; current
+  stable Android/Legado listening uses `mode=buffered`.
+- Long-form queued generation remains available through the `/jobs/tts` job API.
+- `/status` remains available for busy/session/job/recent-reader diagnostics.
 - The API is documented clearly enough for third-party clients to implement.
 - High-efficiency inference is a continuing target: reduce avoidable CPU/GPU
   transfers, improve batching/segmentation where safe, and investigate ONNX
@@ -90,13 +94,23 @@ Important source files:
   selection, CUDA DLL preload, model cache, runtime reporting.
 - `src\genie_tts\Core\Inference.py`: core TTS inference loop and decoder path.
 - `src\genie_tts\Core\TTSPlayer.py`: text queue, audio queue, streaming chunks,
-  playback/save handling.
-- `src\genie_tts\Server.py`: FastAPI app, `/health`, `/runtime`, `/tts`,
-  `/tts/raw`, `/tts/wav`, load/unload/reference endpoints.
+  playback/save handling, and TTS session status snapshots.
+- `src\genie_tts\Server.py`: FastAPI app, `/health`, `/runtime`, `/status`,
+  `/tts`, `/tts/raw`, `/tts/wav`, `/tts/stream.wav`, `/tts/legado.wav`, job API,
+  reader diagnostics, load/unload/reference endpoints, and profiling endpoints.
 - `src\genie_tts\Internal.py`: public Python API functions.
 - `src\genie_tts\__init__.py`: package export surface.
 - `src\genie_tts\GUI\GUI.py`: main GUI widgets.
 - `src\genie_tts\GUI\ServerManager.py`: GUI worker calling inference functions.
+- `Docs\API-Service.md`: detailed HTTP API contract.
+- `Docs\Architecture.md`: factual module boundaries and current data flows.
+- `Docs\Maintenance.md`: validation chain, troubleshooting, cleanup, and release
+  checklist.
+- `Examples\api_client.py`: standard-library client for load/reference/raw,
+  Legado stream, Legado buffered, and WAV requests.
+- `Examples\api_job_client.py`: standard-library client for queued job API.
+- `Examples\legado_http_tts.json`: Legado streaming WAV source template.
+- `Examples\legado_http_tts_buffered.json`: Legado buffered WAV source template.
 - `Tutorial\English\API Server Tutorial.py`: API usage tutorial.
 - `requirements.txt`: CPU-friendly base dependency list.
 - `requirements-cuda.txt`: package-local CUDA overlay dependencies.
@@ -106,6 +120,11 @@ Important source files:
   runtime paths.
 - `Scripts\verify-internal-api.ps1`: starts a temporary internal API server and
   validates real HTTP raw PCM/WAV TTS using package-local runtime paths.
+- `Scripts\verify-legado-stream-api.ps1`: validates Legado stream and buffered
+  WAV paths plus `/status` diagnostics.
+- `Scripts\verify-job-api.ps1`: validates long-form job submit/poll/download WAV
+  behavior.
+- `Scripts\profile-internal-api.ps1`: optional local profiling harness.
 
 Important local package artifacts, normally ignored by git:
 
@@ -114,6 +133,8 @@ Important local package artifacts, normally ignored by git:
 - `GenieData`: local shared runtime resources.
 - `CharacterModels`: local character model resources.
 - `test`: local validation outputs.
+- `UserData`: local runtime state, including job WAV outputs under
+  `UserData\Jobs`.
 
 ## Runtime and Dependency Rules
 
@@ -154,12 +175,23 @@ Core endpoints:
 - `GET /runtime`: ONNX Runtime version, selected provider mode, selected
   providers, available providers, loaded characters, per-session providers,
   shared model providers, and API audio metadata.
+- `GET /status`: lightweight busy/session/job/recent-reader diagnostics. It
+  reports recent reader text length and short hash, not the full text.
 - `POST /load_character`: load/register a character model.
 - `POST /unload_character`: unload a character model.
 - `POST /set_reference_audio`: set reference audio and transcript.
 - `POST /tts`: compatibility alias for raw PCM streaming.
 - `POST /tts/raw`: explicit raw PCM streaming endpoint for low-latency clients.
 - `POST /tts/wav`: complete WAV response after synthesis finishes.
+- `GET/POST /tts/stream.wav`: generic stream WAV endpoint.
+- `GET/POST /tts/legado.wav`: reader/Legado WAV endpoint. Supports
+  `mode=stream` and `mode=buffered`; `mode=buffered` is the current stable
+  Android/Legado reading path.
+- `POST /jobs/tts`: submit a queued long-form TTS job.
+- `GET /jobs`: list recent jobs.
+- `GET /jobs/{job_id}`: inspect a queued/running/completed/failed/cancelled job.
+- `POST /jobs/{job_id}/cancel`: cancel a queued or running job.
+- `GET /jobs/{job_id}/wav`: download a completed job WAV.
 - `POST /stop`: stop current TTS task.
 - `POST /clear_reference_audio_cache`: clear reference audio cache.
 
@@ -172,14 +204,47 @@ Audio format rules:
   `X-Genie-Sample-Width`.
 - Complete WAV responses use `audio/wav` and must be readable by normal WAV
   clients.
+- Stream WAV responses use `audio/wav` with a WAV header followed by chunked PCM
+  data. They are lower latency but less compatible with some Android media
+  stacks because the final data size is not known at response start.
+- Buffered Legado responses use `audio/wav` and return a complete in-memory WAV
+  after synthesis finishes. Prefer this for stable Android/Legado listening.
 - For listening/audiobook scenarios, prioritize stable streaming, clear end
   signals, recoverable errors, and predictable chunk formats.
+
+## Reader and Legado Status
+
+- `mode=buffered` on `/tts/legado.wav?wait_timeout=300&mode=buffered` is the
+  current stable Android/Legado listening route.
+- `mode=stream` on `/tts/legado.wav?wait_timeout=300` remains available for
+  low-latency clients and compatibility experiments.
+- `/tts/legado.wav` accepts JSON, form bodies, and query parameters. It accepts
+  Legado-style text aliases such as `speakText`; if no character is provided,
+  it defaults to `feibi`.
+- `/status` should be used when diagnosing reader playback. It reports busy
+  state, active session state, job state, and recent reader request metadata.
+- Do not treat a valid buffered WAV or stream WAV structure as proof that the
+  Chinese spoken content is correct. Listening/content inspection is still
+  required.
+
+## Documentation Boundaries
+
+- `README.md` is the human quick-start and orientation document for this local
+  integration package.
+- `Docs\API-Service.md` is the detailed endpoint contract and should remain the
+  source of truth for request/response semantics.
+- `Docs\Architecture.md` is the factual module-boundary and data-flow document.
+- `Docs\Maintenance.md` is the validation, troubleshooting, cleanup, and
+  release checklist document.
+- `AGENTS.md` is for future Codex/AI agents. Do not turn it into a user tutorial.
 
 ## Development Flow
 
 1. Start with facts.
    - Read `AGENTS.md`.
    - Check `git status --short --branch`.
+   - Check `git remote -v`, recent log, and current diff before assuming branch
+     or remote state.
    - Inspect current diffs before editing.
    - Use `rg` for code search.
 
@@ -204,6 +269,8 @@ Audio format rules:
 5. Keep changes small and reviewable.
    - Avoid unrelated refactors.
    - Preserve public function names unless a migration path is provided.
+   - Preserve HTTP endpoint names unless the compatibility migration is
+     documented in `Docs\API-Service.md`.
    - Do not delete/reset user changes.
    - Do not make destructive git operations unless explicitly asked.
 
@@ -216,13 +283,24 @@ Audio format rules:
 
 ## Validation Expectations
 
-Minimum validation after backend/runtime changes:
+Minimum validation after documentation-only or low-risk maintenance changes:
+
+```powershell
+git -C E:\Genie-TTS diff --check
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m compileall E:\Genie-TTS\src
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m py_compile "E:\Genie-TTS\Tutorial\English\API Server Tutorial.py" "E:\Genie-TTS\Examples\api_client.py" "E:\Genie-TTS\Examples\api_job_client.py"
+```
+
+Minimum validation after backend/runtime/script changes:
 
 ```powershell
 E:\Genie-TTS\Scripts\verify-internal-runtime.ps1
 E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m compileall E:\Genie-TTS\src
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m py_compile "E:\Genie-TTS\Tutorial\English\API Server Tutorial.py"
+E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m py_compile "E:\Genie-TTS\Tutorial\English\API Server Tutorial.py" "E:\Genie-TTS\Examples\api_client.py" "E:\Genie-TTS\Examples\api_job_client.py"
 E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m pip check
+E:\Genie-TTS\Scripts\verify-internal-api.ps1 -Runtime cuda
+E:\Genie-TTS\Scripts\verify-legado-stream-api.ps1 -Runtime cuda
+E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
 ```
 
 Provider check:

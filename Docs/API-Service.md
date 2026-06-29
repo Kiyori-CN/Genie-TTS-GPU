@@ -58,6 +58,11 @@ or another audio-content inspection step.
    `POST /jobs/tts` for a queued background job
 7. `GET /runtime` again to confirm actual model session providers
 
+For Android/Legado reading, prefer
+`/tts/legado.wav?wait_timeout=300&mode=buffered`. The default stream mode is
+kept for low-latency clients and compatibility testing, but buffered mode is the
+current stable route for uninterrupted reader playback.
+
 `POST /set_reference_audio` performs real preprocessing. It loads reference
 audio, runs HuBERT, and for v2ProPlus characters prepares speaker/reference
 embeddings when the prompt encoder is available. Treat it as a warm-up step,
@@ -171,20 +176,18 @@ normal file response rather than low-latency streaming.
 
 ### GET/POST /tts/legado.wav and /tts/stream.wav
 
-This is the preferred reader/listening endpoint for `D:\10_Project\legado` and
-similar HTTP TTS clients. The default `mode=stream` path prioritizes low
-latency: it returns `audio/wav` immediately with a WAV header, then streams
-generated PCM chunks as HTTP response chunks. It does not create a server-side
-audio file before playback.
+This is the reader/listening endpoint for `D:\10_Project\legado` and similar
+HTTP TTS clients. For stable Android/Legado reading, use `mode=buffered`:
+`/tts/legado.wav?wait_timeout=300&mode=buffered`. The default `mode=stream` path
+prioritizes low latency: it returns `audio/wav` immediately with a WAV header,
+then streams generated PCM chunks as HTTP response chunks. It does not create a
+server-side audio file before playback.
 
-If a reader app or Android media stack starts playback but stops after a few
-sentences, use `mode=buffered` on the same endpoint:
-`/tts/legado.wav?wait_timeout=300&mode=buffered`. Buffered mode still does not
-write a server-side audio file, but it waits for synthesis to finish in memory
-and returns a complete WAV response with an exact length. This mode prioritizes
-Android/Legado player compatibility over first-audio latency, and is more
-compatible with players that do not tolerate chunked WAV streams whose final
-data size is not known at response start.
+Buffered mode still does not write a server-side audio file, but it waits for
+synthesis to finish in memory and returns a complete WAV response with an exact
+length. This mode prioritizes Android/Legado player compatibility over
+first-audio latency, and is more compatible with players that do not tolerate
+chunked WAV streams whose final data size is not known at response start.
 
 `/tts/legado.wav` is a stable alias for Legado httpTTS sources. `/tts/stream.wav`
 is the generic name for other streaming WAV clients. Both endpoints accept JSON,
@@ -476,3 +479,10 @@ E:\Genie-TTS\Scripts\profile-internal-api.ps1 -Runtime cuda -Endpoint wav -Warmu
 
 The profiling script writes a JSON report under `E:\Genie-TTS\test` and leaves
 per-run audio artifacts there for inspection.
+
+## Related Maintenance Documents
+
+- `E:\Genie-TTS\README.md`: quick start and package orientation.
+- `E:\Genie-TTS\Docs\Architecture.md`: module boundaries and data flows.
+- `E:\Genie-TTS\Docs\Maintenance.md`: validation chain, troubleshooting, cleanup,
+  and release checklist.
