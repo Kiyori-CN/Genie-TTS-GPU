@@ -295,6 +295,25 @@ class TTSPlayer:
         with self._api_lock:
             self._session_active = False
 
+    def status_snapshot(self) -> dict:
+        with self._api_lock:
+            return {
+                "session_active": self._session_active,
+                "stop_requested": self._stop_event.is_set(),
+                "tts_done": self._tts_done_event.is_set(),
+                "playback_done": self._playback_done_event.is_set(),
+                "tts_worker_alive": self._tts_worker is not None and self._tts_worker.is_alive(),
+                "playback_worker_alive": self._playback_worker is not None and self._playback_worker.is_alive(),
+                "text_queue_size": self._text_queue.qsize(),
+                "audio_queue_size": self._audio_queue.qsize(),
+                "split_sentence": self._split,
+                "playback_enabled": self._play,
+                "save_path_active": self._current_save_path is not None,
+                "sample_rate": self.sample_rate,
+                "channels": self.channels,
+                "sample_width": self.bytes_per_sample,
+            }
+
     def feed(self, text_chunk: str):
         with self._api_lock:
             if not text_chunk:

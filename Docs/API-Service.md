@@ -50,12 +50,13 @@ or another audio-content inspection step.
 
 1. `GET /health`
 2. `GET /runtime`
-3. `POST /load_character`
-4. `POST /set_reference_audio`
-5. `POST /tts/legado.wav` or `POST /tts/stream.wav` for reader playback,
+3. `GET /status`
+4. `POST /load_character`
+5. `POST /set_reference_audio`
+6. `POST /tts/legado.wav` or `POST /tts/stream.wav` for reader playback,
    `POST /tts/raw` for raw PCM clients, `POST /tts/wav` for a complete WAV, or
    `POST /jobs/tts` for a queued background job
-6. `GET /runtime` again to confirm actual model session providers
+7. `GET /runtime` again to confirm actual model session providers
 
 `POST /set_reference_audio` performs real preprocessing. It loads reference
 audio, runs HuBERT, and for v2ProPlus characters prepares speaker/reference
@@ -78,6 +79,26 @@ Returns ONNX Runtime version, selected providers, available providers, loaded
 characters, per-character session providers, shared model providers, and API
 audio metadata. For GPU claims, inspect the actual session provider lists under
 `loaded_models` and `shared_models`, not only `available_providers`.
+
+### GET /status
+
+Returns lightweight service activity diagnostics for live reader testing. It
+reports whether the service is busy, whether a TTS session is active, queued or
+running background jobs, and recent reader requests. Reader request diagnostics
+include endpoint, mode, timestamps, status, text length, a short text hash,
+chunk count, and audio byte count. They do not include the request text.
+
+Useful fields:
+
+```text
+busy                                true when a session, job, or reader request is active
+active_tts_session                  current single-session lock state
+jobs.has_active_job                 queued or running background job exists
+reader_requests.active_count        active reader request count
+last_reader_request.mode            stream or buffered
+last_reader_request.text_chars      input text length
+last_reader_request.text_sha256_12  short content hash, not the original text
+```
 
 ### POST /load_character
 
@@ -225,6 +246,19 @@ For players that interrupt chunked WAV playback, import
 latency for a standard complete WAV response. The buffered template also uses
 the placeholder IP `http://192.168.1.100:8000`; replace it with the PC's LAN IP
 before importing.
+
+Dedicated local verification for the Legado reader endpoints:
+
+```powershell
+E:\Genie-TTS\Scripts\verify-legado-stream-api.ps1 -Runtime cuda
+```
+
+This starts a temporary package-local API server, simulates Legado-style POST
+JSON requests, checks both `/tts/legado.wav?wait_timeout=300` and
+`/tts/legado.wav?wait_timeout=300&mode=buffered`, validates WAV structure and
+headers, confirms CUDA provider use, and removes temporary validation audio by
+default. Pass `-KeepOutputs` only when you intentionally need to inspect the
+generated files under `test`.
 
 Minimal Legado httpTTS rule shape:
 

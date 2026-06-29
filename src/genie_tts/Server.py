@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 import os
@@ -37,6 +38,7 @@ STREAM_WAV_AUDIO_FORMAT = "wav_stream_pcm_s16le"
 LEGADO_DEFAULT_CHARACTER = "feibi"
 JOB_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "UserData" / "Jobs"
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_READER_STATUSES = {"completed", "failed", "interrupted", "rejected"}
 
 app = FastAPI()
 
@@ -142,6 +144,123 @@ class TTSJobRecord:
         }
 
 
+@dataclass
+class ReaderRequestRecord:
+    request_id: str
+    endpoint: str
+    mode: str
+    character_name: str
+    text_chars: int
+    text_sha256_12: str
+    split_sentence: bool
+    wait_timeout_seconds: float
+    status: str = "received"
+    started_at: str = field(default_factory=utc_now)
+    finished_at: Optional[str] = None
+    audio_bytes: int = 0
+    chunks: int = 0
+    error_detail: Optional[str] = None
+    started_monotonic: float = field(default_factory=time.perf_counter)
+    finished_monotonic: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, object]:
+        now = time.perf_counter()
+        finished_or_now = self.finished_monotonic if self.finished_monotonic is not None else now
+        return {
+            "request_id": self.request_id,
+            "endpoint": self.endpoint,
+            "mode": self.mode,
+            "character_name": self.character_name,
+            "text_chars": self.text_chars,
+            "text_sha256_12": self.text_sha256_12,
+            "split_sentence": self.split_sentence,
+            "wait_timeout_seconds": self.wait_timeout_seconds,
+            "status": self.status,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "elapsed_seconds": finished_or_now - self.started_monotonic,
+            "audio_bytes": self.audio_bytes,
+            "chunks": self.chunks,
+            "error_detail": self.error_detail,
+        }
+
+
+class ReaderRequestTracker:
+    def __init__(self, max_records: int = 50):
+        self.max_records = max_records
+        self._records: Dict[str, ReaderRequestRecord] = {}
+        self._order: List[str] = []
+        self._lock = threading.Lock()
+
+    def start(self, payload: TTSPayload, endpoint: str, mode: str, wait_timeout_seconds: float) -> str:
+        request_id = uuid.uuid4().hex
+        record = ReaderRequestRecord(
+            request_id=request_id,
+            endpoint=endpoint,
+            mode=mode,
+            character_name=payload.character_name,
+            text_chars=len(payload.text),
+            text_sha256_12=hashlib.sha256(payload.text.encode("utf-8")).hexdigest()[:12],
+            split_sentence=payload.split_sentence,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+        with self._lock:
+            self._records[request_id] = record
+            self._order.append(request_id)
+            self._trim_locked()
+        return request_id
+
+    def update(self, request_id: Optional[str], status: str) -> None:
+        if request_id is None:
+            return
+        with self._lock:
+            record = self._records.get(request_id)
+            if record:
+                record.status = status
+
+    def finish(
+            self,
+            request_id: Optional[str],
+            status: str,
+            audio_bytes: int = 0,
+            chunks: int = 0,
+            error_detail: Optional[str] = None,
+    ) -> None:
+        if request_id is None:
+            return
+        with self._lock:
+            record = self._records.get(request_id)
+            if record is None:
+                return
+            record.status = status
+            record.audio_bytes = audio_bytes
+            record.chunks = chunks
+            record.error_detail = truncate_error(error_detail)
+            record.finished_at = utc_now()
+            record.finished_monotonic = time.perf_counter()
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            records = [
+                self._records[request_id]
+                for request_id in reversed(self._order)
+                if request_id in self._records
+            ]
+            active = [record.to_dict() for record in records if record.status not in TERMINAL_READER_STATUSES]
+            recent = [record.to_dict() for record in records[:10]]
+            return {
+                "active_count": len(active),
+                "active": active,
+                "last": recent[0] if recent else None,
+                "recent": recent,
+            }
+
+    def _trim_locked(self) -> None:
+        while len(self._order) > self.max_records:
+            oldest = self._order.pop(0)
+            self._records.pop(oldest, None)
+
+
 class TTSJobManager:
     def __init__(self, output_dir: Path, max_jobs: int = 100):
         self.output_dir = output_dir
@@ -228,6 +347,26 @@ class TTSJobManager:
                 record.status in {"queued", "running"} and not record.cancel_requested
                 for record in self._jobs.values()
             )
+
+    def status_snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            records = [
+                self._jobs[job_id]
+                for job_id in reversed(self._order)
+                if job_id in self._jobs
+            ]
+            active = [
+                record.to_dict()
+                for record in records
+                if record.status in {"queued", "running"} and not record.cancel_requested
+            ]
+            return {
+                "has_active_job": bool(active),
+                "queued_count": sum(1 for record in records if record.status == "queued" and not record.cancel_requested),
+                "running_count": sum(1 for record in records if record.status == "running" and not record.cancel_requested),
+                "active": active,
+                "last": records[0].to_dict() if records else None,
+            }
 
     def _trim_locked(self) -> None:
         while len(self._order) > self.max_jobs:
@@ -368,6 +507,28 @@ class TTSJobManager:
 
 
 job_manager = TTSJobManager(JOB_OUTPUT_DIR)
+reader_request_tracker = ReaderRequestTracker()
+
+
+def truncate_error(error_detail: Optional[str], limit: int = 500) -> Optional[str]:
+    if error_detail is None:
+        return None
+    value = str(error_detail)
+    if len(value) <= limit:
+        return value
+    return value[:limit - 3] + "..."
+
+
+def exception_detail(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return str(exc)
+
+
+def exception_status(exc: Exception) -> str:
+    if isinstance(exc, HTTPException) and 400 <= exc.status_code < 500:
+        return "rejected"
+    return "failed"
 
 
 def prepare_reference_audio(character_name: str) -> ReferenceAudio:
@@ -543,11 +704,13 @@ async def profiled_wav_stream_generator(
         queue: asyncio.Queue,
         endpoint: str,
         estimated_data_size: int,
+        reader_request_id: Optional[str] = None,
 ) -> AsyncIterator[bytes]:
     start = time.perf_counter()
     byte_count = 0
     chunk_count = 0
     completed = False
+    error_detail = None
     try:
         header = streaming_wav_header(estimated_data_size)
         byte_count += len(header)
@@ -561,9 +724,18 @@ async def profiled_wav_stream_generator(
             byte_count += len(chunk)
             chunk_count += 1
             yield chunk
+    except Exception as exc:
+        error_detail = exception_detail(exc)
+        raise
     finally:
         if not completed:
             tts_player.stop()
+        if completed:
+            reader_request_tracker.finish(reader_request_id, "completed", byte_count, chunk_count)
+        elif error_detail:
+            reader_request_tracker.finish(reader_request_id, "failed", byte_count, chunk_count, error_detail)
+        else:
+            reader_request_tracker.finish(reader_request_id, "interrupted", byte_count, chunk_count)
         profile_recorder.record(
             "http_wav_stream",
             time.perf_counter() - start,
@@ -737,29 +909,55 @@ async def raw_tts_response(payload: TTSPayload) -> StreamingResponse:
     )
 
 
-async def stream_wav_tts_response(payload: TTSPayload, endpoint: str, wait_timeout_seconds: float) -> StreamingResponse:
-    validate_tts_payload(payload)
-    loop = asyncio.get_running_loop()
-    stream_queue = await start_tts_task_after_wait(payload, loop, wait_timeout_seconds)
-    return StreamingResponse(
-        profiled_wav_stream_generator(stream_queue, endpoint, estimate_stream_wav_data_size(payload.text)),
-        media_type="audio/wav",
-        headers=stream_wav_headers(),
-    )
+async def stream_wav_tts_response(
+        payload: TTSPayload,
+        endpoint: str,
+        wait_timeout_seconds: float,
+        reader_request_id: Optional[str] = None,
+) -> StreamingResponse:
+    try:
+        validate_tts_payload(payload)
+        loop = asyncio.get_running_loop()
+        reader_request_tracker.update(reader_request_id, "waiting_for_session")
+        stream_queue = await start_tts_task_after_wait(payload, loop, wait_timeout_seconds)
+        reader_request_tracker.update(reader_request_id, "streaming")
+        return StreamingResponse(
+            profiled_wav_stream_generator(
+                stream_queue,
+                endpoint,
+                estimate_stream_wav_data_size(payload.text),
+                reader_request_id=reader_request_id,
+            ),
+            media_type="audio/wav",
+            headers=stream_wav_headers(),
+        )
+    except Exception as exc:
+        reader_request_tracker.finish(reader_request_id, exception_status(exc), error_detail=exception_detail(exc))
+        raise
 
 
-async def buffered_wav_tts_response(payload: TTSPayload, endpoint: str, wait_timeout_seconds: float) -> Response:
+async def buffered_wav_tts_response(
+        payload: TTSPayload,
+        endpoint: str,
+        wait_timeout_seconds: float,
+        reader_request_id: Optional[str] = None,
+) -> Response:
     start = time.perf_counter()
     byte_count = 0
-    validate_tts_payload(payload)
-    loop = asyncio.get_running_loop()
-    stream_queue = await start_tts_task_after_wait(payload, loop, wait_timeout_seconds)
+    chunk_count = 0
     pcm_chunks = bytearray()
     try:
+        validate_tts_payload(payload)
+        loop = asyncio.get_running_loop()
+        reader_request_tracker.update(reader_request_id, "waiting_for_session")
+        stream_queue = await start_tts_task_after_wait(payload, loop, wait_timeout_seconds)
+        reader_request_tracker.update(reader_request_id, "buffering")
         async for chunk in audio_stream_generator(stream_queue):
             pcm_chunks.extend(chunk)
+            chunk_count += 1
         wav_bytes = pcm_bytes_to_wav(bytes(pcm_chunks))
         byte_count = len(wav_bytes)
+        reader_request_tracker.finish(reader_request_id, "completed", byte_count, chunk_count)
         return Response(
             content=wav_bytes,
             media_type="audio/wav",
@@ -772,6 +970,9 @@ async def buffered_wav_tts_response(payload: TTSPayload, endpoint: str, wait_tim
                 "Content-Disposition": 'inline; filename="genie-tts-buffered.wav"',
             },
         )
+    except Exception as exc:
+        reader_request_tracker.finish(reader_request_id, exception_status(exc), byte_count, chunk_count, exception_detail(exc))
+        raise
     finally:
         profile_recorder.record(
             "http_wav_buffered_response",
@@ -794,18 +995,22 @@ async def tts_raw_endpoint(payload: TTSPayload):
 async def tts_stream_wav_endpoint(request: Request):
     payload = await parse_tts_request_payload(request, default_split_sentence=True)
     wait_timeout = parse_wait_timeout(request)
-    if parse_reader_mode(request) == "buffered":
-        return await buffered_wav_tts_response(payload, "/tts/stream.wav", wait_timeout)
-    return await stream_wav_tts_response(payload, "/tts/stream.wav", wait_timeout)
+    mode = parse_reader_mode(request)
+    request_id = reader_request_tracker.start(payload, "/tts/stream.wav", mode, wait_timeout)
+    if mode == "buffered":
+        return await buffered_wav_tts_response(payload, "/tts/stream.wav", wait_timeout, request_id)
+    return await stream_wav_tts_response(payload, "/tts/stream.wav", wait_timeout, request_id)
 
 
 @app.api_route("/tts/legado.wav", methods=["GET", "POST"])
 async def tts_legado_wav_endpoint(request: Request):
     payload = await parse_tts_request_payload(request, default_split_sentence=True)
     wait_timeout = parse_wait_timeout(request)
-    if parse_reader_mode(request) == "buffered":
-        return await buffered_wav_tts_response(payload, "/tts/legado.wav", wait_timeout)
-    return await stream_wav_tts_response(payload, "/tts/legado.wav", wait_timeout)
+    mode = parse_reader_mode(request)
+    request_id = reader_request_tracker.start(payload, "/tts/legado.wav", mode, wait_timeout)
+    if mode == "buffered":
+        return await buffered_wav_tts_response(payload, "/tts/legado.wav", wait_timeout, request_id)
+    return await stream_wav_tts_response(payload, "/tts/legado.wav", wait_timeout, request_id)
 
 
 @app.post("/tts/wav")
@@ -917,6 +1122,27 @@ def health_endpoint():
     return {"status": "ok"}
 
 
+@app.get("/status")
+def status_endpoint():
+    """Return lightweight service activity diagnostics without request text."""
+    tts_status = tts_player.status_snapshot()
+    job_status = job_manager.status_snapshot()
+    reader_status = reader_request_tracker.snapshot()
+    return {
+        "status": "ok",
+        "busy": bool(
+            tts_status["session_active"]
+            or job_status["has_active_job"]
+            or reader_status["active_count"]
+        ),
+        "active_tts_session": tts_status["session_active"],
+        "tts_player": tts_status,
+        "jobs": job_status,
+        "reader_requests": reader_status,
+        "last_reader_request": reader_status["last"],
+    }
+
+
 @app.get("/runtime")
 def runtime_endpoint():
     """Return current ONNX Runtime environment information."""
@@ -924,6 +1150,7 @@ def runtime_endpoint():
     runtime_info["api_audio"] = {
         "raw_endpoint": "/tts/raw",
         "raw_alias_endpoint": "/tts",
+        "status_endpoint": "/status",
         "stream_wav_endpoint": "/tts/stream.wav",
         "legado_stream_wav_endpoint": "/tts/legado.wav",
         "wav_endpoint": "/tts/wav",
