@@ -96,10 +96,12 @@ Important source files:
 - `src\genie_tts\Core\TTSPlayer.py`: text queue, audio queue, streaming chunks,
   playback/save handling, and TTS session status snapshots.
 - `src\genie_tts\Server.py`: FastAPI app, `/health`, `/runtime`, `/status`,
-  `/tts`, `/tts/raw`, `/tts/wav`, `/tts/stream.wav`, `/tts/legado.wav`, job API,
-  reader diagnostics, load/unload/reference endpoints, and profiling endpoints.
+  `/ui`, `/ui/config`, `/runtime/configure`, `/tts`, `/tts/raw`, `/tts/wav`,
+  `/tts/stream.wav`, `/tts/legado.wav`, job API, reader diagnostics,
+  load/unload/reference endpoints, and profiling endpoints.
 - `src\genie_tts\Internal.py`: public Python API functions.
 - `src\genie_tts\__init__.py`: package export surface.
+- `src\genie_tts\WebUI`: no-build browser inference panel served by FastAPI.
 - `src\genie_tts\GUI\GUI.py`: main GUI widgets.
 - `src\genie_tts\GUI\ServerManager.py`: GUI worker calling inference functions.
 - `Docs\API-Service.md`: detailed HTTP API contract.
@@ -114,6 +116,11 @@ Important source files:
 - `Tutorial\English\API Server Tutorial.py`: API usage tutorial.
 - `requirements.txt`: CPU-friendly base dependency list.
 - `requirements-cuda.txt`: package-local CUDA overlay dependencies.
+- `go-webui.bat`: root double-click entrypoint that uses package-local Python
+  to start the API and open/print the WebUI URL.
+- `Scripts\start-webui.py`: package-local WebUI/API launcher that selects
+  runtime, detects LAN IPv4 addresses, finds a free port when needed, and starts
+  FastAPI.
 - `Scripts\verify-internal-runtime.ps1`: verifies internal Python and CUDA EP
   session creation.
 - `Scripts\start-internal-api.ps1`: starts the API using only package-local
@@ -175,9 +182,13 @@ Preserve existing endpoints unless a compatibility migration is documented.
 Core endpoints:
 
 - `GET /health`: process health.
+- `GET /ui`: no-build browser inference panel.
+- `GET /ui/config`: WebUI defaults and dynamic local/LAN access URLs.
 - `GET /runtime`: ONNX Runtime version, selected provider mode, selected
   providers, available providers, loaded characters, per-session providers,
   shared model providers, and API audio metadata.
+- `POST /runtime/configure`: select the provider order for sessions loaded
+  after the call.
 - `GET /status`: lightweight busy/session/job/recent-reader diagnostics. It
   reports recent reader text length and short hash, not the full text.
 - `POST /load_character`: load/register a character model.

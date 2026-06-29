@@ -7,6 +7,17 @@ PATH edits.
 
 ## Start the Server
 
+Start the API and browser inference panel with the package-local runtime:
+
+```cmd
+E:\Genie-TTS\go-webui.bat
+```
+
+This defaults to `cuda`, binds the API to `0.0.0.0`, opens
+`http://127.0.0.1:<port>/ui`, and prints the current LAN IPv4 access URL. The
+launcher accepts overrides such as `--runtime cpu`, `--host 127.0.0.1`,
+`--port 8001`, `--strict-port`, and `--no-open`.
+
 Local-only CUDA server:
 
 ```powershell
@@ -77,6 +88,33 @@ Returns process health:
 ```json
 {"status": "ok"}
 ```
+
+### GET /ui and /ui/config
+
+`GET /ui` serves the browser inference panel. The panel is a no-build static
+HTML/CSS/JS page hosted by the same FastAPI process. It can configure runtime
+mode, load a character, set reference audio, generate complete WAV or
+Legado-compatible WAV responses, submit/poll job API requests, and refresh
+`/health`, `/runtime`, and `/status`.
+
+`GET /ui/config` returns WebUI defaults for the local `feibi` Chinese character,
+endpoint paths, audio-format descriptions, and dynamic access URLs. LAN IPs are
+detected at request time and are not stored in config.
+
+### POST /runtime/configure
+
+Request:
+
+```json
+{"mode": "cuda", "unload_sessions": true}
+```
+
+Valid modes are `cpu`, `cuda`, `directml`, and `auto`. This endpoint updates
+the provider order for sessions loaded after the call. Already loaded ONNX
+sessions keep their existing providers until the character/shared models are
+reloaded or the process restarts, unless `unload_sessions=true` is supplied.
+When unloading is requested, the server rejects the request with `409` if a TTS
+session, reader request, or queued/running job is active.
 
 ### GET /runtime
 

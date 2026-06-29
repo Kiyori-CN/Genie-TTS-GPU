@@ -47,11 +47,18 @@ The FastAPI server owns the HTTP contract and request coordination:
 - Job endpoints: `/jobs/tts`, `/jobs`, `/jobs/{job_id}`,
   `/jobs/{job_id}/cancel`, `/jobs/{job_id}/wav`.
 - Diagnostics: `/health`, `/runtime`, `/status`, `/profile`.
+- WebUI: `/ui`, `/ui/config`, and static assets under `/ui/assets`.
+- Runtime selection API: `/runtime/configure` for sessions loaded after the
+  change.
 
 The server also defines audio response helpers for raw PCM, stream WAV, and
 complete WAV responses. It performs request parsing for JSON, form, and query
 parameter bodies on the reader endpoints, including aliases such as `speakText`
 for Legado rules.
+
+The WebUI is intentionally thin and local to the FastAPI service: static files
+live under `src\genie_tts\WebUI`, and the page calls the existing HTTP API
+instead of bypassing server semantics.
 
 ## Model and Provider Layer
 
@@ -134,6 +141,11 @@ full request text. It reports text length and a short content hash instead.
 
 ## Validation Scripts
 
+- `go-webui.bat`: root double-click entrypoint for the browser inference panel.
+  It invokes `Scripts\start-webui.py` through the package-local Python runtime.
+- `Scripts\start-webui.py`: configures the package-local child-process
+  environment, selects runtime mode, finds a free port when needed, prints
+  local/LAN WebUI URLs, optionally opens the browser, and starts FastAPI.
 - `Scripts\verify-internal-runtime.ps1`: verifies package-local Python,
   import/runtime state, and CUDA EP session creation.
 - `Scripts\start-internal-api.ps1`: starts a package-local API server with a

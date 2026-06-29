@@ -3,11 +3,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import io
+import ipaddress
 import json
+import locale
 import os
 from pathlib import Path
 import queue
+import re
+import socket
 import struct
+import subprocess
 import threading
 import time
 from urllib.parse import parse_qs
@@ -19,6 +24,7 @@ import logging
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .Audio.ReferenceAudio import ReferenceAudio
@@ -36,11 +42,130 @@ RAW_AUDIO_FORMAT = "pcm_s16le"
 RAW_AUDIO_MEDIA_TYPE = "application/octet-stream"
 STREAM_WAV_AUDIO_FORMAT = "wav_stream_pcm_s16le"
 LEGADO_DEFAULT_CHARACTER = "feibi"
-JOB_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "UserData" / "Jobs"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WEBUI_DIR = Path(__file__).resolve().parent / "WebUI"
+JOB_OUTPUT_DIR = REPO_ROOT / "UserData" / "Jobs"
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
 TERMINAL_READER_STATUSES = {"completed", "failed", "interrupted", "rejected"}
 
 app = FastAPI()
+app.mount("/ui/assets", StaticFiles(directory=str(WEBUI_DIR), check_dir=False), name="webui_assets")
+
+IPV4_RE = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+VIRTUAL_ADAPTER_MARKERS = (
+    "loopback",
+    "vethernet",
+    "virtual",
+    "vmware",
+    "virtualbox",
+    "bluetooth",
+    "tunnel",
+    "tap",
+    "wsl",
+    "hyper-v",
+    "meta",
+)
+
+
+def is_lan_ipv4_address(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ip.version == 4 and any(ip in network for network in RFC1918_NETWORKS)
+
+
+def adapter_looks_virtual(adapter_name: str) -> bool:
+    lowered = adapter_name.lower()
+    return any(marker in lowered for marker in VIRTUAL_ADAPTER_MARKERS)
+
+
+def add_lan_address(addresses: List[str], value: str) -> None:
+    if is_lan_ipv4_address(value) and value not in addresses:
+        addresses.append(value)
+
+
+def ipv4_candidates(text: str) -> List[str]:
+    return IPV4_RE.findall(text)
+
+
+def ipconfig_lan_ipv4_addresses() -> List[str]:
+    addresses: List[str] = []
+    try:
+        completed = subprocess.run(
+            ["ipconfig"],
+            capture_output=True,
+            text=True,
+            encoding=locale.getpreferredencoding(False),
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return addresses
+
+    blocks = completed.stdout.replace("\r\n", "\n").split("\n\n")
+    for block in blocks:
+        lines = [line.rstrip() for line in block.splitlines() if line.strip()]
+        if not lines or not lines[0].rstrip().endswith(":"):
+            continue
+        adapter_name = lines[0].rstrip(":")
+        if adapter_looks_virtual(adapter_name):
+            continue
+
+        gateway_lines: List[str] = []
+        for index, line in enumerate(lines):
+            if "Gateway" in line or "网关" in line:
+                gateway_lines.append(line)
+                if index + 1 < len(lines) and lines[index + 1].startswith(" "):
+                    gateway_lines.append(lines[index + 1])
+        has_lan_gateway = any(
+            is_lan_ipv4_address(part)
+            for line in gateway_lines
+            for part in ipv4_candidates(line)
+        )
+        if not has_lan_gateway:
+            continue
+
+        for line in lines:
+            if "IPv4" not in line:
+                continue
+            for part in ipv4_candidates(line):
+                add_lan_address(addresses, part)
+    return addresses
+
+
+def socket_lan_ipv4_addresses() -> List[str]:
+    addresses: List[str] = []
+    try:
+        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
+            add_lan_address(addresses, item[4][0])
+    except OSError:
+        pass
+    return addresses
+
+
+def get_lan_ipv4_addresses() -> List[str]:
+    """Return current LAN IPv4 addresses for displaying access URLs."""
+    addresses: List[str] = []
+    for address in ipconfig_lan_ipv4_addresses() or socket_lan_ipv4_addresses():
+        add_lan_address(addresses, address)
+    return addresses
+
+
+def access_urls_for_request(request: Request) -> Dict[str, object]:
+    port = request.url.port or (443 if request.url.scheme == "https" else 80)
+    lan_addresses = get_lan_ipv4_addresses()
+    return {
+        "api_base_url": str(request.base_url).rstrip("/"),
+        "local_url": f"{request.url.scheme}://127.0.0.1:{port}/ui",
+        "lan_urls": [f"{request.url.scheme}://{address}:{port}/ui" for address in lan_addresses],
+        "lan_ipv4_addresses": lan_addresses,
+    }
 
 
 class CharacterPayload(BaseModel):
@@ -71,6 +196,11 @@ class TTSJobPayload(BaseModel):
     character_name: str
     text: str
     split_sentence: bool = True
+
+
+class RuntimeConfigurePayload(BaseModel):
+    mode: str
+    unload_sessions: bool = False
 
 
 class ProfilePayload(BaseModel):
@@ -1032,6 +1162,9 @@ async def tts_wav_endpoint(payload: TTSPayload):
             headers={
                 **raw_audio_headers(),
                 "X-Genie-Audio-Format": "wav_pcm_s16le",
+                "X-Genie-Inner-Audio-Format": RAW_AUDIO_FORMAT,
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="genie-tts-complete.wav"',
             },
         )
     finally:
@@ -1116,10 +1249,141 @@ def clear_reference_audio_cache_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/ui")
+@app.get("/ui/")
+def webui_endpoint():
+    """Serve the browser TTS inference panel."""
+    index_path = WEBUI_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="WebUI index.html was not found.")
+    response = FileResponse(index_path)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/ui/config")
+def webui_config_endpoint(request: Request):
+    """Return WebUI defaults and dynamic local/LAN access URLs."""
+    default_character = LEGADO_DEFAULT_CHARACTER
+    default_character_root = REPO_ROOT / "CharacterModels" / "v2ProPlus" / default_character
+    return {
+        "defaults": {
+            "runtime_mode": "cuda",
+            "runtime_modes": ["cpu", "cuda", "directml", "auto"],
+            "character_name": default_character,
+            "onnx_model_dir": str(default_character_root / "tts_models"),
+            "language": "Chinese",
+            "reference_audio_path": str(
+                default_character_root
+                / "prompt_wav"
+                / "zh_vo_Main_Linaxita_2_1_10_26.wav"
+            ),
+            "reference_text": "在此之前，请您务必继续享受旅居拉古那的时光。",
+            "input_text": (
+                "清晨的城市逐渐苏醒，街边的灯光还没有完全熄灭。"
+                "她合上手里的书，抬头望向窗外，决定把今天的计划重新整理一遍。"
+            ),
+            "split_sentence": True,
+            "unload_sessions": False,
+        },
+        "endpoints": {
+            "load_character": "/load_character",
+            "set_reference_audio": "/set_reference_audio",
+            "runtime_configure": "/runtime/configure",
+            "runtime": "/runtime",
+            "status": "/status",
+            "health": "/health",
+            "raw": "/tts/raw",
+            "stream_wav": "/tts/stream.wav?wait_timeout=300",
+            "complete_wav": "/tts/wav",
+            "legado_buffered": "/tts/legado.wav?wait_timeout=300&mode=buffered",
+            "legado_stream": "/tts/legado.wav?wait_timeout=300",
+            "stop": "/stop",
+            "clear_reference_audio_cache": "/clear_reference_audio_cache",
+            "job_submit": "/jobs/tts",
+            "job_status": "/jobs/{job_id}",
+            "job_cancel": "/jobs/{job_id}/cancel",
+            "job_wav": "/jobs/{job_id}/wav",
+        },
+        "access": access_urls_for_request(request),
+        "audio_formats": {
+            "raw_pcm": {
+                "endpoint": "/tts/raw",
+                "media_type": RAW_AUDIO_MEDIA_TYPE,
+                "format": RAW_AUDIO_FORMAT,
+                "playable_in_browser": False,
+            },
+            "stream_wav": {
+                "endpoints": ["/tts/stream.wav", "/tts/legado.wav"],
+                "media_type": "audio/wav",
+                "format": STREAM_WAV_AUDIO_FORMAT,
+                "complete_file": False,
+            },
+            "buffered_wav": {
+                "endpoint": "/tts/legado.wav?mode=buffered",
+                "media_type": "audio/wav",
+                "format": "wav_pcm_s16le",
+                "complete_file": True,
+            },
+            "complete_wav": {
+                "endpoint": "/tts/wav",
+                "media_type": "audio/wav",
+                "format": "wav_pcm_s16le",
+                "complete_file": True,
+            },
+            "job_wav": {
+                "endpoint": "/jobs/{job_id}/wav",
+                "media_type": "audio/wav",
+                "format": "wav_pcm_s16le",
+                "complete_file": True,
+            },
+        },
+    }
+
+
 @app.get("/health")
 def health_endpoint():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.post("/runtime/configure")
+def configure_runtime_endpoint(payload: RuntimeConfigurePayload):
+    """Configure ONNX Runtime providers for sessions loaded after this call."""
+    loaded_before = list(model_manager.character_to_model.keys())
+    if payload.unload_sessions:
+        tts_status = tts_player.status_snapshot()
+        job_status = job_manager.status_snapshot()
+        reader_status = reader_request_tracker.snapshot()
+        if tts_status["session_active"] or job_status["has_active_job"] or reader_status["active_count"]:
+            raise HTTPException(status_code=409, detail="Cannot unload sessions while TTS is busy.")
+
+    try:
+        result = model_manager.configure_runtime(payload.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.unload_sessions:
+        model_manager.unload_runtime_sessions()
+    loaded_characters = list(model_manager.character_to_model.keys())
+    reload_required = bool(loaded_characters or (payload.unload_sessions and loaded_before))
+    if payload.unload_sessions and loaded_before:
+        message = "Runtime configured and loaded sessions were unloaded. Reload character models before synthesis."
+    elif payload.unload_sessions:
+        message = "Runtime configured. No loaded sessions needed unloading."
+    elif loaded_characters:
+        message = "Runtime configured. Already loaded ONNX sessions keep their previous providers until reloaded."
+    else:
+        message = "Runtime configured. Load character models after this call to use the selected providers."
+    return {
+        "status": "success",
+        "runtime": result,
+        "loaded_characters": loaded_characters,
+        "unloaded_characters": loaded_before if payload.unload_sessions else [],
+        "unload_requested": bool(payload.unload_sessions),
+        "sessions_unloaded": bool(payload.unload_sessions and loaded_before),
+        "reload_required_for_loaded_sessions": reload_required,
+        "message": message,
+    }
 
 
 @app.get("/status")

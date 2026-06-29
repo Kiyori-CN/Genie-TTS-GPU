@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Genie-TTS WebUI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/ui/assets/style.css?v=20260629-webui3">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="title-line">
+        <h1>Genie-TTS</h1>
+        <span id="healthBadge" class="badge muted" data-i18n="healthPending">Health -</span>
+        <span id="activityBadge" class="badge muted" data-i18n="activityIdle">Idle</span>
+      </div>
+      <div class="address-line" aria-label="Access URLs">
+        <button id="copyApiBtn" type="button" class="address-chip" data-i18n-title="copyApiTitle">
+          <span data-i18n="apiLabel">API</span><strong id="apiBase">-</strong>
+        </button>
+        <button id="copyLocalBtn" type="button" class="address-chip" data-i18n-title="copyLocalTitle">
+          <span data-i18n="localLabel">Local</span><strong id="localUrl">-</strong>
+        </button>
+        <button id="copyLanBtn" type="button" class="address-chip" data-i18n-title="copyLanTitle">
+          <span data-i18n="lanLabel">LAN</span><strong id="lanUrl">-</strong>
+        </button>
+      </div>
+      <div id="lanList" class="lan-list" aria-label="LAN access URLs"></div>
+    </div>
+    <div class="top-actions">
+      <label class="auto-toggle" data-i18n-title="autoRefreshTitle">
+        <input id="autoRefresh" type="checkbox" checked>
+        <span data-i18n="autoRefresh">Auto</span>
+      </label>
+      <button id="languageToggle" type="button" class="language-btn" data-i18n-title="languageTitle">EN</button>
+      <button id="refreshAllBtn" type="button" class="icon-btn" data-i18n-title="refreshTitle" data-i18n-aria-label="refreshTitle">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8"/><path d="M21 4v6h-6M3 20v-6h6"/></svg>
+      </button>
+      <button id="stopBtn" type="button" class="icon-btn danger" data-i18n-title="stopTitle" data-i18n-aria-label="stopTitle">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel status-panel" aria-label="Runtime status">
+      <div class="panel-title">
+        <h2 data-i18n="runtimeTitle">Runtime</h2>
+        <span id="runtimeBadge" class="badge muted">-</span>
+      </div>
+
+      <div class="field-row compact">
+        <label for="runtimeMode" data-i18n="runtimeModeLabel">Runtime mode</label>
+        <select id="runtimeMode">
+          <option value="cuda">cuda</option>
+          <option value="cpu">cpu</option>
+          <option value="directml">directml</option>
+          <option value="auto">auto</option>
+        </select>
+        <button id="applyRuntimeBtn" type="button" data-i18n="applyRuntime">Apply</button>
+      </div>
+
+      <label class="toggle-row runtime-toggle" data-i18n-title="unloadSessionsTitle">
+        <input id="unloadSessions" type="checkbox">
+        <span data-i18n="unloadSessionsLabel">Unload loaded sessions</span>
+      </label>
+
+      <dl class="facts compact-facts">
+        <div><dt data-i18n="modeLabel">Mode</dt><dd id="runtimeCurrent">-</dd></div>
+        <div><dt data-i18n="selectedLabel">Selected</dt><dd id="selectedProviders" class="pill-line">-</dd></div>
+        <div><dt data-i18n="availableLabel">Available</dt><dd id="availableProviders" class="pill-line">-</dd></div>
+        <div><dt data-i18n="loadedLabel">Loaded</dt><dd id="loadedCharacters" class="pill-line">-</dd></div>
+      </dl>
+
+      <div class="section-head" data-i18n="sessionProvidersTitle">Session providers</div>
+      <div id="sessionProviders" class="session-list">-</div>
+
+      <div class="section-head" data-i18n="activityTitle">Activity</div>
+      <dl class="facts compact-facts">
+        <div><dt data-i18n="busyLabel">Busy</dt><dd id="busyState" class="pill-line">-</dd></div>
+        <div><dt data-i18n="activeSessionLabel">Session</dt><dd id="activeSession" class="pill-line">-</dd></div>
+        <div><dt data-i18n="jobsLabel">Jobs</dt><dd id="jobState" class="pill-line">-</dd></div>
+        <div><dt data-i18n="readerLabel">Reader</dt><dd id="readerState" class="pill-line">-</dd></div>
+      </dl>
+    </section>
+
+    <section class="panel form-panel" aria-label="TTS parameters">
+      <div class="panel-title">
+        <h2 data-i18n="synthesisTitle">Synthesis</h2>
+        <span id="preparedBadge" class="badge muted" data-i18n="notLoaded">Not loaded</span>
+      </div>
+
+      <div class="grid two">
+        <label><span data-i18n="characterNameLabel">Character</span>
+          <input id="characterName" type="text" autocomplete="off">
+        </label>
+        <label><span data-i18n="languageLabel">Language</span>
+          <input id="language" type="text" autocomplete="off">
+        </label>
+      </div>
+
+      <label><span data-i18n="modelDirLabel">ONNX model directory</span>
+        <input id="modelDir" type="text" autocomplete="off">
+      </label>
+
+      <label><span data-i18n="referenceAudioLabel">Reference audio path</span>
+        <input id="referenceAudio" type="text" autocomplete="off">
+      </label>
+
+      <label><span data-i18n="referenceTextLabel">Reference text</span>
+        <textarea id="referenceText" rows="2"></textarea>
+      </label>
+
+      <label class="text-label"><span data-i18n="inputTextLabel">Input text</span>
+        <span id="textStats" class="input-stat">0 chars</span>
+        <textarea id="inputText" rows="10"></textarea>
+      </label>
+
+      <div class="grid two tight">
+        <label class="toggle-row">
+          <input id="splitSentence" type="checkbox" checked>
+          <span data-i18n="splitSentenceLabel">Smart sentence split</span>
+        </label>
+        <label><span data-i18n="endpointModeLabel">Endpoint</span>
+          <select id="endpointMode">
+            <option value="wav" data-i18n="modeCompleteWav">Complete WAV - /tts/wav</option>
+            <option value="legado-buffered" data-i18n="modeLegadoBuffered">Legado buffered - stable</option>
+            <option value="legado-stream" data-i18n="modeLegadoStream">Legado stream - low latency</option>
+            <option value="stream-wav" data-i18n="modeStreamWav">Stream WAV - generic</option>
+            <option value="raw" data-i18n="modeRawPcm">Raw PCM - download</option>
+            <option value="job" data-i18n="modeJob">Queued job - long text</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="button-row">
+        <button id="loadCharacterBtn" type="button" data-i18n="loadCharacter">Load</button>
+        <button id="setReferenceBtn" type="button" data-i18n="setReference">Reference</button>
+        <button id="prepareBtn" type="button" class="secondary" data-i18n="prepare">Load + reference</button>
+        <button id="clearCacheBtn" type="button" class="secondary" data-i18n="clearCache">Clear cache</button>
+        <button id="restoreDefaultsBtn" type="button" class="secondary" data-i18n="restoreDefaults">Defaults</button>
+        <button id="generateBtn" type="button" class="primary" data-i18n="generate">Generate</button>
+      </div>
+    </section>
+
+    <section class="panel output-panel" aria-label="Output and diagnostics">
+      <div class="panel-title">
+        <h2 data-i18n="outputTitle">Output</h2>
+        <span id="requestBadge" class="badge muted" data-i18n="requestIdle">Idle</span>
+      </div>
+
+      <div class="format-list" aria-label="Audio formats">
+        <div><strong data-i18n="rawPcmTitle">Raw PCM</strong><span data-i18n="rawPcmDesc">pcm_s16le, 32000 Hz, mono</span></div>
+        <div><strong data-i18n="streamWavTitle">Stream WAV</strong><span data-i18n="streamWavDesc">chunked audio/wav</span></div>
+        <div><strong data-i18n="bufferedWavTitle">Buffered WAV</strong><span data-i18n="bufferedWavDesc">complete file after synthesis</span></div>
+        <div><strong data-i18n="jobWavTitle">Job WAV</strong><span data-i18n="jobWavDesc">queued output file</span></div>
+      </div>
+
+      <audio id="audioPlayer" controls></audio>
+      <a id="downloadLink" class="download disabled" href="#" download data-i18n="downloadOutput">Download output</a>
+
+      <dl class="facts response-facts">
+        <div><dt data-i18n="responseModeLabel">Mode</dt><dd id="responseMode">-</dd></div>
+        <div><dt data-i18n="responseBytesLabel">Bytes</dt><dd id="responseBytes">-</dd></div>
+        <div><dt data-i18n="responseElapsedLabel">Elapsed</dt><dd id="responseElapsed">-</dd></div>
+        <div><dt data-i18n="responseFormatLabel">Format</dt><dd id="responseFormat">-</dd></div>
+      </dl>
+
+      <div id="jobBox" class="job-box hidden">
+        <div class="job-head">
+          <strong data-i18n="jobTitle">Job</strong>
+          <button id="cancelJobBtn" type="button" class="small danger" data-i18n="cancelJob">Cancel</button>
+        </div>
+        <dl class="facts compact-facts">
+          <div><dt data-i18n="jobIdLabel">Job id</dt><dd id="jobId">-</dd></div>
+          <div><dt data-i18n="jobStatusLabel">Status</dt><dd id="jobStatus">-</dd></div>
+          <div><dt data-i18n="jobStageLabel">Stage</dt><dd id="jobStage">-</dd></div>
+          <div><dt data-i18n="jobMessageLabel">Message</dt><dd id="jobMessage">-</dd></div>
+        </dl>
+      </div>
+
+      <div class="section-title-row">
+        <div class="section-head" data-i18n="logTitle">Log</div>
+        <button id="clearLogBtn" type="button" class="icon-btn small" data-i18n-title="clearLogTitle" data-i18n-aria-label="clearLogTitle">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5M14 11v5"/></svg>
+        </button>
+      </div>
+      <pre id="logBox" class="log"></pre>
+
+      <details class="json-details">
+        <summary data-i18n="runtimeJsonTitle">Runtime JSON</summary>
+        <pre id="runtimeJson" class="json-preview"></pre>
+      </details>
+      <details class="json-details">
+        <summary data-i18n="statusJsonTitle">Status JSON</summary>
+        <pre id="statusJson" class="json-preview"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="/ui/assets/app.js?v=20260629-webui3"></script>
+</body>
+</html>

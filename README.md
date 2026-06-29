@@ -33,6 +33,17 @@ experiments and clients that tolerate chunked WAV streams.
 
 ## Quick Start
 
+Start the local WebUI and LAN-accessible API in one step:
+
+```cmd
+E:\Genie-TTS\go-webui.bat
+```
+
+The launcher uses `E:\Genie-TTS\Runtime\.venv\Scripts\python.exe`, defaults to
+`cuda`, listens on `0.0.0.0`, opens `http://127.0.0.1:<port>/ui`, and prints the
+current LAN IPv4 WebUI URL. Command-line overrides are passed through, for
+example `go-webui.bat --runtime cpu --port 8001 --no-open`.
+
 Start a local CUDA API server:
 
 ```powershell
@@ -100,7 +111,10 @@ audio-content inspection step.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Process health check. |
+| `GET /ui` | Browser inference panel for load/reference/TTS/job testing. |
+| `GET /ui/config` | WebUI defaults plus current local and LAN access URLs. |
 | `GET /runtime` | ONNX Runtime version, selected providers, available providers, loaded characters, and actual session providers. |
+| `POST /runtime/configure` | Select providers for subsequently loaded ONNX sessions. |
 | `GET /status` | Busy state, active TTS session, queued/running jobs, and recent reader request diagnostics. |
 | `POST /load_character` | Load/register an ONNX character model. |
 | `POST /set_reference_audio` | Set and preprocess reference audio/transcript for a character. |

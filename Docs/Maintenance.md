@@ -47,6 +47,17 @@ E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
 Use `-Runtime cpu` separately when a change could affect CPU fallback. Do not
 present a CUDA-only pass as proof that CPU fallback remains healthy.
 
+For WebUI entrypoint changes, also start the no-build browser panel through the
+root launcher and verify that it prints local/LAN URLs and serves `/ui`:
+
+```cmd
+E:\Genie-TTS\go-webui.bat --runtime cuda --no-open
+```
+
+Then check `/ui`, `/ui/config`, `/health`, `/runtime`, and `/status` from the
+printed local URL. If the page generates audio, remove only temporary files that
+can be identified as created by the current run.
+
 For Chinese listening-quality baseline work, run the focused listening harness
 after the runtime/API chain is green:
 
@@ -114,7 +125,8 @@ listening/audiobook path rather than only a short single phrase.
 Allowed source areas normally include:
 
 - `AGENTS.md`, `README.md`, `README_zh.md`, `Docs\*.md`, `Examples\*.py`,
-  `Examples\*.json`, `Scripts\*.ps1`, `src\`, `requirements*.txt`,
+  `Examples\*.json`, `Scripts\*.ps1`, `Scripts\*.py`, `src\`,
+  `go-webui.bat`, `requirements*.txt`,
   `pyproject.toml`, and `.gitignore`.
 
 Do not stage these package/runtime artifacts:

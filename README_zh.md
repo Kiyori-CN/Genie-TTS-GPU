@@ -18,6 +18,17 @@
 
 ## 快速开始
 
+一键启动本地 WebUI 和局域网可访问 API：
+
+```cmd
+E:\Genie-TTS\go-webui.bat
+```
+
+启动器使用 `E:\Genie-TTS\Runtime\.venv\Scripts\python.exe`，默认 `cuda`、
+监听 `0.0.0.0`，会打开 `http://127.0.0.1:<port>/ui`，并在终端打印当前实
+际局域网 IPv4 WebUI 地址。命令行参数可直接透传，例如
+`go-webui.bat --runtime cpu --port 8001 --no-open`。
+
 启动本机 CUDA API：
 
 ```powershell
@@ -77,7 +88,10 @@ Android/Legado 使用时，先用 `-HostName 0.0.0.0` 启动服务，再替换 `
 | 端点 | 用途 |
 | --- | --- |
 | `GET /health` | 进程健康检查。 |
+| `GET /ui` | 浏览器推理面板，用于加载角色、设置 reference、TTS 和 job 测试。 |
+| `GET /ui/config` | WebUI 默认参数，以及当前本机/局域网访问地址。 |
 | `GET /runtime` | ONNX Runtime 版本、选中 providers、可用 providers、已加载角色和实际 session providers。 |
+| `POST /runtime/configure` | 为后续加载的 ONNX sessions 选择 provider。 |
 | `GET /status` | busy 状态、当前 TTS session、队列/运行中 job、最近 reader 请求诊断。 |
 | `POST /load_character` | 加载/注册 ONNX 角色模型。 |
 | `POST /set_reference_audio` | 为角色设置并预处理参考音频和文本。 |

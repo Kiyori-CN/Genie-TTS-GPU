@@ -431,6 +431,15 @@ class ModelManager:
         self.character_to_model.clear()
         gc.collect()
 
+    def unload_runtime_sessions(self) -> None:
+        """Unload ONNX sessions so later loads use the current provider order."""
+        self.character_to_model.clear()
+        self.cn_hubert = None
+        self.speaker_verification_model = None
+        self.roberta_model = None
+        self.roberta_tokenizer = None
+        gc.collect()
+
     def remove_character(self, character_name: str) -> None:
         character_name = character_name.lower()
         if character_name in self.character_to_model:
