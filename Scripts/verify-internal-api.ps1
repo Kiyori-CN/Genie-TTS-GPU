@@ -84,6 +84,7 @@ $BaseUrl = "http://${ClientHost}:$Port"
 $RawOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName.raw"
 $StreamWavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName-stream.wav"
 $StreamStandardWavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName-stream-standardized.wav"
+$BufferedWavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName-legado-buffered.wav"
 $WavOut = Join-Path $OutputDir "verify-api-$Runtime-$CharacterName.wav"
 
 $serverCode = @"
@@ -125,6 +126,7 @@ $env:GENIE_VERIFY_SPLIT_SENTENCE = if ($SplitSentence) { 'true' } else { 'false'
 $env:GENIE_VERIFY_RAW_OUT = $RawOut
 $env:GENIE_VERIFY_STREAM_WAV_OUT = $StreamWavOut
 $env:GENIE_VERIFY_STREAM_STANDARD_WAV_OUT = $StreamStandardWavOut
+$env:GENIE_VERIFY_BUFFERED_WAV_OUT = $BufferedWavOut
 $env:GENIE_VERIFY_WAV_OUT = $WavOut
 
 $clientScript = @'
@@ -148,6 +150,7 @@ split_sentence = os.environ["GENIE_VERIFY_SPLIT_SENTENCE"].lower() in {"1", "tru
 raw_out = Path(os.environ["GENIE_VERIFY_RAW_OUT"])
 stream_wav_out = Path(os.environ["GENIE_VERIFY_STREAM_WAV_OUT"])
 stream_standard_wav_out = Path(os.environ["GENIE_VERIFY_STREAM_STANDARD_WAV_OUT"])
+buffered_wav_out = Path(os.environ["GENIE_VERIFY_BUFFERED_WAV_OUT"])
 wav_out = Path(os.environ["GENIE_VERIFY_WAV_OUT"])
 
 
@@ -235,6 +238,7 @@ expected_provider = expected_first_provider(runtime, runtime_before["selected_pr
 assert runtime_before["selected_providers"][0] == expected_provider, runtime_before
 assert runtime_before["api_audio"]["raw_format"] == "pcm_s16le", runtime_before["api_audio"]
 assert runtime_before["api_audio"]["legado_stream_wav_endpoint"] == "/tts/legado.wav", runtime_before["api_audio"]
+assert "buffered" in runtime_before["api_audio"].get("reader_response_modes", []), runtime_before["api_audio"]
 assert runtime_before["api_audio"]["sample_rate"] == 32000, runtime_before["api_audio"]
 
 load_status, _, load_result = read_json("POST", "/load_character", {
@@ -299,6 +303,24 @@ assert stream_wav_info["channels"] == 1, stream_wav_info
 assert stream_wav_info["sample_width"] == 2, stream_wav_info
 assert stream_wav_info["sample_rate"] == 32000, stream_wav_info
 assert stream_wav_info["frames"] > 0, stream_wav_info
+
+buffered_start = time.perf_counter()
+buffered_status, buffered_headers, buffered_body = post_bytes("/tts/legado.wav?wait_timeout=300&mode=buffered", raw_payload, timeout=300)
+buffered_elapsed = time.perf_counter() - buffered_start
+buffered_wav_out.write_bytes(buffered_body)
+assert buffered_status == 200
+assert buffered_headers.get("content-type", "").startswith("audio/wav"), buffered_headers
+assert buffered_headers.get("x-genie-audio-format") == "wav_pcm_s16le", buffered_headers
+assert buffered_headers.get("x-genie-inner-audio-format") == "pcm_s16le", buffered_headers
+assert buffered_headers.get("x-genie-stream-mode") == "buffered", buffered_headers
+assert buffered_headers.get("x-genie-sample-rate") == "32000", buffered_headers
+assert buffered_headers.get("x-genie-channels") == "1", buffered_headers
+assert buffered_headers.get("x-genie-sample-width") == "2", buffered_headers
+buffered_wav_info = inspect_wav(buffered_wav_out)
+assert buffered_wav_info["channels"] == 1, buffered_wav_info
+assert buffered_wav_info["sample_width"] == 2, buffered_wav_info
+assert buffered_wav_info["sample_rate"] == 32000, buffered_wav_info
+assert buffered_wav_info["frames"] > 0, buffered_wav_info
 
 wav_payload = {
     "character_name": character,
@@ -368,6 +390,22 @@ summary = {
         "wave": stream_wav_info,
         "stream_output": str(stream_wav_out),
         "standardized_wav_output": str(stream_standard_wav_out),
+    },
+    "legado_buffered_wav": {
+        "status": buffered_status,
+        "headers": {
+            "Content-Type": buffered_headers.get("content-type"),
+            "X-Genie-Audio-Format": buffered_headers.get("x-genie-audio-format"),
+            "X-Genie-Inner-Audio-Format": buffered_headers.get("x-genie-inner-audio-format"),
+            "X-Genie-Stream-Mode": buffered_headers.get("x-genie-stream-mode"),
+            "X-Genie-Sample-Rate": buffered_headers.get("x-genie-sample-rate"),
+            "X-Genie-Channels": buffered_headers.get("x-genie-channels"),
+            "X-Genie-Sample-Width": buffered_headers.get("x-genie-sample-width"),
+        },
+        "bytes": len(buffered_body),
+        "elapsed_seconds": buffered_elapsed,
+        "wave": buffered_wav_info,
+        "output": str(buffered_wav_out),
     },
     "wav": {
         "status": wav_status,

@@ -151,9 +151,19 @@ normal file response rather than low-latency streaming.
 ### GET/POST /tts/legado.wav and /tts/stream.wav
 
 This is the preferred reader/listening endpoint for `D:\10_Project\legado` and
-similar HTTP TTS clients. It returns `audio/wav` immediately with a WAV header,
-then streams generated PCM chunks as HTTP response chunks. It does not create a
-server-side audio file before playback.
+similar HTTP TTS clients. The default `mode=stream` path prioritizes low
+latency: it returns `audio/wav` immediately with a WAV header, then streams
+generated PCM chunks as HTTP response chunks. It does not create a server-side
+audio file before playback.
+
+If a reader app or Android media stack starts playback but stops after a few
+sentences, use `mode=buffered` on the same endpoint:
+`/tts/legado.wav?wait_timeout=300&mode=buffered`. Buffered mode still does not
+write a server-side audio file, but it waits for synthesis to finish in memory
+and returns a complete WAV response with an exact length. This mode prioritizes
+Android/Legado player compatibility over first-audio latency, and is more
+compatible with players that do not tolerate chunked WAV streams whose final
+data size is not known at response start.
 
 `/tts/legado.wav` is a stable alias for Legado httpTTS sources. `/tts/stream.wav`
 is the generic name for other streaming WAV clients. Both endpoints accept JSON,
@@ -185,6 +195,18 @@ X-Genie-Sample-Width: 2
 X-Genie-Stream-Mode: http_chunked
 ```
 
+Buffered compatibility mode response headers include:
+
+```text
+Content-Type: audio/wav
+X-Genie-Audio-Format: wav_pcm_s16le
+X-Genie-Inner-Audio-Format: pcm_s16le
+X-Genie-Sample-Rate: 32000
+X-Genie-Channels: 1
+X-Genie-Sample-Width: 2
+X-Genie-Stream-Mode: buffered
+```
+
 The reader endpoints wait up to `wait_timeout` seconds for the single TTS
 session lock before returning `409`. The default is `300`, which is better for
 Legado continuous paragraph playback than failing immediately when the previous
@@ -192,10 +214,17 @@ paragraph is still finishing. `/tts/raw` and `/tts/wav` keep their existing
 fast-`409` behavior.
 
 Legado import example is provided at `E:\Genie-TTS\Examples\legado_http_tts.json`.
-Before importing it, replace `http://192.168.1.100:8000` with the PC's LAN IP
-and start the API server with `-HostName 0.0.0.0`. In Legado, enable online
-reading and turn on the streaming audio option (`streamReadAloudAudio`) for the
-best continuous playback path.
+Before importing it, replace the placeholder IP `http://192.168.1.100:8000`
+with the PC's LAN IP and start the API server with `-HostName 0.0.0.0`. In
+Legado, enable online reading and turn on the streaming audio option
+(`streamReadAloudAudio`) for the best continuous playback path.
+
+For players that interrupt chunked WAV playback, import
+`E:\Genie-TTS\Examples\legado_http_tts_buffered.json` or change the URL suffix to
+`/tts/legado.wav?wait_timeout=300&mode=buffered`. This trades first-audio
+latency for a standard complete WAV response. The buffered template also uses
+the placeholder IP `http://192.168.1.100:8000`; replace it with the PC's LAN IP
+before importing.
 
 Minimal Legado httpTTS rule shape:
 

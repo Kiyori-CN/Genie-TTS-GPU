@@ -683,6 +683,20 @@ def parse_wait_timeout(request: Request, default: float = 300.0) -> float:
     return max(0.0, min(parsed, 1800.0))
 
 
+def parse_reader_mode(request: Request) -> str:
+    value = first_present(
+        dict(request.query_params),
+        ["mode", "response_mode", "stream_mode"],
+        "stream",
+    )
+    mode = str(value).strip().lower()
+    if mode in {"stream", "streaming", "chunked", "http_chunked"}:
+        return "stream"
+    if mode in {"buffer", "buffered", "complete", "complete_wav", "wav"}:
+        return "buffered"
+    raise HTTPException(status_code=400, detail="mode must be 'stream' or 'buffered'.")
+
+
 async def parse_tts_request_payload(request: Request, default_split_sentence: bool) -> TTSPayload:
     values: Dict[str, Any] = dict(request.query_params)
     content_type = request.headers.get("content-type", "").lower()
@@ -734,6 +748,38 @@ async def stream_wav_tts_response(payload: TTSPayload, endpoint: str, wait_timeo
     )
 
 
+async def buffered_wav_tts_response(payload: TTSPayload, endpoint: str, wait_timeout_seconds: float) -> Response:
+    start = time.perf_counter()
+    byte_count = 0
+    validate_tts_payload(payload)
+    loop = asyncio.get_running_loop()
+    stream_queue = await start_tts_task_after_wait(payload, loop, wait_timeout_seconds)
+    pcm_chunks = bytearray()
+    try:
+        async for chunk in audio_stream_generator(stream_queue):
+            pcm_chunks.extend(chunk)
+        wav_bytes = pcm_bytes_to_wav(bytes(pcm_chunks))
+        byte_count = len(wav_bytes)
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={
+                **raw_audio_headers(),
+                "X-Genie-Audio-Format": "wav_pcm_s16le",
+                "X-Genie-Inner-Audio-Format": RAW_AUDIO_FORMAT,
+                "X-Genie-Stream-Mode": "buffered",
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="genie-tts-buffered.wav"',
+            },
+        )
+    finally:
+        profile_recorder.record(
+            "http_wav_buffered_response",
+            time.perf_counter() - start,
+            {"endpoint": endpoint, "bytes": byte_count},
+        )
+
+
 @app.post("/tts")
 async def tts_endpoint(payload: TTSPayload):
     return await raw_tts_response(payload)
@@ -748,6 +794,8 @@ async def tts_raw_endpoint(payload: TTSPayload):
 async def tts_stream_wav_endpoint(request: Request):
     payload = await parse_tts_request_payload(request, default_split_sentence=True)
     wait_timeout = parse_wait_timeout(request)
+    if parse_reader_mode(request) == "buffered":
+        return await buffered_wav_tts_response(payload, "/tts/stream.wav", wait_timeout)
     return await stream_wav_tts_response(payload, "/tts/stream.wav", wait_timeout)
 
 
@@ -755,6 +803,8 @@ async def tts_stream_wav_endpoint(request: Request):
 async def tts_legado_wav_endpoint(request: Request):
     payload = await parse_tts_request_payload(request, default_split_sentence=True)
     wait_timeout = parse_wait_timeout(request)
+    if parse_reader_mode(request) == "buffered":
+        return await buffered_wav_tts_response(payload, "/tts/legado.wav", wait_timeout)
     return await stream_wav_tts_response(payload, "/tts/legado.wav", wait_timeout)
 
 
@@ -887,6 +937,8 @@ def runtime_endpoint():
         "raw_format": RAW_AUDIO_FORMAT,
         "stream_wav_media_type": "audio/wav",
         "stream_wav_format": STREAM_WAV_AUDIO_FORMAT,
+        "reader_response_modes": ["stream", "buffered"],
+        "reader_buffered_query": "mode=buffered",
         "sample_rate": tts_player.sample_rate,
         "channels": tts_player.channels,
         "sample_width": tts_player.bytes_per_sample,

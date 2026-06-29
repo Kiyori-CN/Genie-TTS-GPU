@@ -165,6 +165,14 @@ def main() -> int:
         int(stream_headers.get("x-genie-sample-width", "2")),
     )
 
+    buffered_bytes, buffered_headers, buffered_elapsed = post_bytes(
+        args.base_url,
+        "/tts/legado.wav?wait_timeout=300&mode=buffered",
+        payload,
+    )
+    buffered_path = output_dir / f"{args.character}-api-legado-buffered.wav"
+    buffered_path.write_bytes(buffered_bytes)
+
     wav_bytes, wav_headers, wav_elapsed = post_bytes(args.base_url, "/tts/wav", payload)
     wav_path = output_dir / f"{args.character}-api.wav"
     wav_path.write_bytes(wav_bytes)
@@ -185,6 +193,12 @@ def main() -> int:
             "elapsed_seconds": stream_elapsed,
             "stream_output": str(stream_path),
             "standardized_wav_output": str(stream_wrapped_wav_path),
+        },
+        "legado_buffered_wav": {
+            "headers": buffered_headers,
+            "bytes": len(buffered_bytes),
+            "elapsed_seconds": buffered_elapsed,
+            "output": str(buffered_path),
         },
         "wav": {
             "headers": wav_headers,
