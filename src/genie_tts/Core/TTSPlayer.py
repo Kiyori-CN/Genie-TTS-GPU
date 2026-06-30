@@ -3,10 +3,11 @@
 import queue
 import os
 import threading
+import time
 
 import numpy as np
 import wave
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Dict, Any
 import logging
 
 from ..Utils.TextSplitter import TextSplitter
@@ -37,6 +38,7 @@ class TTSPlayer:
         self._tts_done_event: threading.Event = threading.Event()
         self._playback_done_event: threading.Event = threading.Event()  # 新增：用于标记播放完成
         self._api_lock: threading.Lock = threading.Lock()
+        self._progress_lock: threading.Lock = threading.Lock()
 
         self._tts_worker: Optional[threading.Thread] = None
         self._playback_worker: Optional[threading.Thread] = None
@@ -58,6 +60,135 @@ class TTSPlayer:
         self._loudness_hop_samples: int = int(0.05 * self.sample_rate)
         self._tail_silence_samples: int = int(0.16 * self.sample_rate)
         self._session_active: bool = False
+        self._next_segment_index: int = 0
+        self._progress: Dict[str, Any] = self._new_progress_snapshot()
+
+    def _new_progress_snapshot(self) -> Dict[str, Any]:
+        return {
+            "stage": "idle",
+            "message": "Idle.",
+            "total_chars": 0,
+            "completed_chars": 0,
+            "total_segments": 0,
+            "completed_segments": 0,
+            "current_segment_index": 0,
+            "current_segment_chars": 0,
+            "generated_pcm_bytes": 0,
+            "generated_wav_bytes": 0,
+            "split_sentence": False,
+            "playback_enabled": False,
+            "save_path_active": False,
+            "started_monotonic": None,
+            "finished_monotonic": None,
+        }
+
+    def _reset_progress(self, split: bool, play: bool, save_path: Optional[str]) -> None:
+        with self._progress_lock:
+            self._next_segment_index = 0
+            self._progress = self._new_progress_snapshot()
+            self._progress.update({
+                "stage": "starting",
+                "message": "TTS session started.",
+                "split_sentence": bool(split),
+                "playback_enabled": bool(play),
+                "save_path_active": save_path is not None,
+                "started_monotonic": time.perf_counter(),
+                "finished_monotonic": None,
+            })
+
+    def _queue_progress(self, segments: List[str], total_chars: int) -> None:
+        with self._progress_lock:
+            self._progress["total_chars"] += max(0, total_chars)
+            self._progress["total_segments"] += len(segments)
+            self._progress["stage"] = "queued"
+            self._progress["message"] = f"Queued {self._progress['total_segments']} text segments."
+
+    def _mark_segment_started(self, segment_index: int, segment_chars: int) -> None:
+        with self._progress_lock:
+            self._progress["stage"] = "synthesizing"
+            self._progress["current_segment_index"] = segment_index
+            self._progress["current_segment_chars"] = segment_chars
+            self._progress["message"] = (
+                f"Synthesizing segment {segment_index}/{self._progress['total_segments'] or '?'} ."
+            ).replace(" .", ".")
+
+    def _mark_segment_completed(self, segment_index: int, segment_chars: int, pcm_bytes: int) -> None:
+        with self._progress_lock:
+            self._progress["completed_segments"] = max(self._progress["completed_segments"], segment_index)
+            completed_chars = self._progress["completed_chars"] + max(0, segment_chars)
+            total_chars = self._progress["total_chars"]
+            self._progress["completed_chars"] = min(completed_chars, total_chars) if total_chars else completed_chars
+            self._progress["generated_pcm_bytes"] += max(0, pcm_bytes)
+            self._progress["message"] = (
+                f"Completed segment {self._progress['completed_segments']}/{self._progress['total_segments'] or '?'} ."
+            ).replace(" .", ".")
+
+    def _finish_progress(self, stage: str, message: str) -> None:
+        with self._progress_lock:
+            total_chars = self._progress["total_chars"]
+            total_segments = self._progress["total_segments"]
+            if stage == "completed":
+                self._progress["completed_chars"] = total_chars
+                self._progress["completed_segments"] = total_segments
+            self._progress["stage"] = stage
+            self._progress["message"] = message
+            self._progress["finished_monotonic"] = time.perf_counter()
+
+    def _set_progress_wav_bytes(self, wav_bytes: int) -> None:
+        with self._progress_lock:
+            self._progress["generated_wav_bytes"] = max(0, wav_bytes)
+
+    def progress_snapshot(self) -> Dict[str, Any]:
+        with self._progress_lock:
+            progress = dict(self._progress)
+
+        now = time.perf_counter()
+        started = progress.pop("started_monotonic", None)
+        finished = progress.pop("finished_monotonic", None)
+        if started is None:
+            elapsed = 0.0
+        else:
+            elapsed = (finished if finished is not None else now) - started
+
+        total_segments = int(progress.get("total_segments") or 0)
+        completed_segments = int(progress.get("completed_segments") or 0)
+        total_chars = int(progress.get("total_chars") or 0)
+        completed_chars = int(progress.get("completed_chars") or 0)
+        if progress.get("stage") == "completed":
+            percent = 100.0
+            estimated_total = elapsed
+            estimated_remaining = 0.0
+        elif total_segments > 0:
+            percent = min(99.9, max(0.0, completed_segments / total_segments * 100.0))
+            if completed_segments > 0:
+                estimated_total = elapsed * (total_segments / completed_segments)
+                estimated_remaining = max(0.0, estimated_total - elapsed)
+            else:
+                estimated_total = None
+                estimated_remaining = None
+        elif total_chars > 0:
+            percent = min(99.9, max(0.0, completed_chars / total_chars * 100.0))
+            if completed_chars > 0:
+                estimated_total = elapsed * (total_chars / completed_chars)
+                estimated_remaining = max(0.0, estimated_total - elapsed)
+            else:
+                estimated_total = None
+                estimated_remaining = None
+        else:
+            percent = 0.0
+            estimated_total = None
+            estimated_remaining = None
+
+        bytes_per_second = self.sample_rate * self.channels * self.bytes_per_sample
+        generated_pcm_bytes = int(progress.get("generated_pcm_bytes") or 0)
+        progress.update({
+            "elapsed_seconds": elapsed,
+            "estimated_remaining_seconds": estimated_remaining,
+            "estimated_total_seconds": estimated_total,
+            "percent": percent,
+            "audio_duration_estimate_seconds": generated_pcm_bytes / float(bytes_per_second) if bytes_per_second else 0.0,
+        })
+        return progress
 
     @staticmethod
     def _preprocess_for_playback(audio_float: np.ndarray) -> bytes:
@@ -138,14 +269,14 @@ class TTSPlayer:
         """从文本队列取句子，生成音频，并通过回调函数或音频队列分发。"""
         while not self._stop_event.is_set():
             try:
-                sentence = self._text_queue.get(timeout=1)
-                if sentence is None or self._stop_event.is_set():
+                task = self._text_queue.get(timeout=1)
+                if task is None or self._stop_event.is_set():
                     break
             except queue.Empty:
                 continue
 
             try:
-                if sentence is STREAM_END:
+                if task is STREAM_END:
                     if self._current_save_path and self._session_audio_chunks:
                         self._save_session_audio()
 
@@ -158,8 +289,19 @@ class TTSPlayer:
                         self._audio_queue.put(AUDIO_STREAM_END)
 
                     self._tts_done_event.set()
+                    if not self._stop_event.is_set():
+                        self._finish_progress("completed", "TTS synthesis completed.")
                     self._session_active = False
                     continue
+
+                if isinstance(task, dict):
+                    sentence = str(task.get("text") or "")
+                    segment_index = int(task.get("segment_index") or 0)
+                    segment_chars = int(task.get("segment_chars") or len(sentence))
+                else:
+                    sentence = str(task)
+                    segment_index = 0
+                    segment_chars = len(sentence)
 
                 gsv_model = model_manager.get(context.current_speaker)
                 if not gsv_model or not context.current_prompt_audio:
@@ -167,6 +309,7 @@ class TTSPlayer:
                     continue
 
                 tts_client.stop_event.clear()
+                self._mark_segment_started(segment_index, segment_chars)
                 with profile_span("sentence_tts_total", language=gsv_model.LANGUAGE, text_chars=len(sentence)):
                     audio_chunk = tts_client.tts(
                         text=sentence,
@@ -192,7 +335,11 @@ class TTSPlayer:
                     if self._chunk_callback:
                         with profile_span("audio_pcm_encode", samples=int(np.asarray(audio_chunk).size)):
                             audio_data = self._preprocess_for_playback(audio_chunk)
+                        self._mark_segment_completed(segment_index, segment_chars, len(audio_data))
                         self._chunk_callback(audio_data)
+                    else:
+                        pcm_bytes = len(self._preprocess_for_playback(audio_chunk))
+                        self._mark_segment_completed(segment_index, segment_chars, pcm_bytes)
 
             except Exception as e:
                 logger.error(f"A critical error occurred while processing the TTS task: {e}", exc_info=True)
@@ -200,6 +347,7 @@ class TTSPlayer:
                 if self._chunk_callback:
                     self._chunk_callback(None)
                 self._tts_done_event.set()
+                self._finish_progress("failed", str(e))
                 self._session_active = False
 
     def _playback_worker_loop(self):
@@ -244,6 +392,8 @@ class TTSPlayer:
                     wf.setsampwidth(self.bytes_per_sample)
                     wf.setframerate(self.sample_rate)
                     wf.writeframes(self._preprocess_for_playback(full_audio))
+                if self._current_save_path and os.path.exists(self._current_save_path):
+                    self._set_progress_wav_bytes(os.path.getsize(self._current_save_path))
             logger.info(f"Audio successfully saved to {os.path.abspath(self._current_save_path)}")
         except Exception as e:
             logger.error(f"Failed to save audio: {e}")
@@ -283,6 +433,7 @@ class TTSPlayer:
             self._split = split
             self._current_save_path = save_path
             self._session_audio_chunks = []
+            self._reset_progress(split, play, save_path)
             self._session_active = True
 
     def reserve_session(self) -> None:
@@ -312,6 +463,7 @@ class TTSPlayer:
                 "sample_rate": self.sample_rate,
                 "channels": self.channels,
                 "sample_width": self.bytes_per_sample,
+                "progress": self.progress_snapshot(),
             }
 
     def feed(self, text_chunk: str):
@@ -320,11 +472,19 @@ class TTSPlayer:
                 return
             if self._split:
                 with profile_span("text_split", text_chars=len(text_chunk)):
-                    sentences = self._text_splitter.split(text_chunk.strip())
-                for sentence in sentences:
-                    self._text_queue.put(sentence)
+                    stripped = text_chunk.strip()
+                    sentences = self._text_splitter.split(stripped) or [stripped]
             else:
-                self._text_queue.put(text_chunk)
+                sentences = [text_chunk]
+
+            self._queue_progress(sentences, len(text_chunk.strip()))
+            for sentence in sentences:
+                self._next_segment_index += 1
+                self._text_queue.put({
+                    "text": sentence,
+                    "segment_index": self._next_segment_index,
+                    "segment_chars": len(sentence),
+                })
 
     def end_session(self):
         with self._api_lock:
@@ -339,6 +499,7 @@ class TTSPlayer:
             tts_client.stop_event.set()
             self._stop_event.set()
             self._tts_done_event.set()
+            self._finish_progress("stopped", "TTS stop requested.")
             self._session_active = False
             self._text_queue.put(None)
             self._audio_queue.put(None)

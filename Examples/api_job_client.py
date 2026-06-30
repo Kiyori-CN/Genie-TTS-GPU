@@ -73,12 +73,19 @@ def wait_for_job(base_url: str, job_id: str, poll_seconds: float, timeout_second
     deadline = time.perf_counter() + timeout_seconds
     while True:
         job = request_json(base_url, "GET", f"/jobs/{job_id}")
+        progress = job.get("progress") or {}
+        parallel = job.get("parallel") or {}
         print(json.dumps({
             "job_id": job["job_id"],
             "status": job["status"],
             "stage": job["stage"],
             "message": job["message"],
             "generated_pcm_bytes": job["generated_pcm_bytes"],
+            "segments": f"{progress.get('completed_segments', 0)}/{progress.get('total_segments', 0)}",
+            "chars": f"{progress.get('completed_chars', 0)}/{progress.get('total_chars', 0)}",
+            "percent": progress.get("percent"),
+            "eta_seconds": progress.get("estimated_remaining_seconds"),
+            "parallel": parallel,
             "output_bytes": job["output_bytes"],
             "elapsed_seconds": job["elapsed_seconds"],
         }, ensure_ascii=False))
@@ -121,6 +128,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text", default=DEFAULT_TEXT)
     parser.add_argument("--split-sentence", action="store_true", default=True)
     parser.add_argument("--no-split-sentence", dest="split_sentence", action="store_false")
+    parser.add_argument("--parallel", dest="parallel_enabled", action="store_true", help="Enable CUDA job segment parallelism.")
+    parser.add_argument("--parallel-workers", default="2", help="Requested CUDA job threads, for example 2, 4, 8, 12, or auto.")
     parser.add_argument("--skip-load", action="store_true", help="Assume the character is already loaded.")
     parser.add_argument("--skip-reference", action="store_true", help="Assume reference audio is already configured.")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
@@ -158,6 +167,8 @@ def main() -> int:
         "character_name": args.character,
         "text": args.text,
         "split_sentence": args.split_sentence,
+        "parallel_enabled": args.parallel_enabled,
+        "parallel_workers": args.parallel_workers if args.parallel_enabled else 1,
     }, timeout=120)
     job_id = submitted["job_id"]
     print("submitted=", json.dumps(submitted, ensure_ascii=False, indent=2))

@@ -5,33 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Genie-TTS WebUI</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/ui/assets/style.css?v=20260629-webui3">
+  <link rel="stylesheet" href="/ui/assets/style.css?v=20260630-webui12">
 </head>
 <body>
   <header class="topbar">
     <div class="brand-block">
       <div class="title-line">
         <h1>Genie-TTS</h1>
-        <span id="healthBadge" class="badge muted" data-i18n="healthPending">Health -</span>
-        <span id="activityBadge" class="badge muted" data-i18n="activityIdle">Idle</span>
+        <span id="healthBadge" class="badge muted" data-i18n="healthPending">健康 -</span>
+        <span id="activityBadge" class="badge muted" data-i18n="activityIdle">空闲</span>
       </div>
-      <div class="address-line" aria-label="Access URLs">
+      <div class="address-line" aria-label="访问地址">
         <button id="copyApiBtn" type="button" class="address-chip" data-i18n-title="copyApiTitle">
           <span data-i18n="apiLabel">API</span><strong id="apiBase">-</strong>
         </button>
         <button id="copyLocalBtn" type="button" class="address-chip" data-i18n-title="copyLocalTitle">
-          <span data-i18n="localLabel">Local</span><strong id="localUrl">-</strong>
+          <span data-i18n="localLabel">本机</span><strong id="localUrl">-</strong>
         </button>
         <button id="copyLanBtn" type="button" class="address-chip" data-i18n-title="copyLanTitle">
-          <span data-i18n="lanLabel">LAN</span><strong id="lanUrl">-</strong>
+          <span data-i18n="lanLabel">局域网</span><strong id="lanUrl">-</strong>
         </button>
       </div>
-      <div id="lanList" class="lan-list" aria-label="LAN access URLs"></div>
+      <div id="lanList" class="lan-list" aria-label="局域网访问地址"></div>
+      <nav class="module-nav" aria-label="WebUI 模块">
+        <a href="#runtimePanel" data-i18n="navRuntime">运行时</a>
+        <a href="#synthesisPanel" data-i18n="navSynthesis">合成</a>
+        <a href="#outputPanel" data-i18n="navOutput">输出</a>
+        <a href="#conversionPanel" data-i18n="navConversion">转换</a>
+        <a href="#readerPanel" data-i18n="navReader">阅读</a>
+        <a href="#endpointPanel" data-i18n="navEndpoints">端点</a>
+        <a href="#activityPanel" data-i18n="navActivity">活动</a>
+      </nav>
     </div>
     <div class="top-actions">
-      <label class="auto-toggle" data-i18n-title="autoRefreshTitle">
+      <label for="autoRefresh" class="auto-toggle" data-i18n-title="autoRefreshTitle">
         <input id="autoRefresh" type="checkbox" checked>
-        <span data-i18n="autoRefresh">Auto</span>
+        <span data-i18n="autoRefresh">自动</span>
       </label>
       <button id="languageToggle" type="button" class="language-btn" data-i18n-title="languageTitle">EN</button>
       <button id="refreshAllBtn" type="button" class="icon-btn" data-i18n-title="refreshTitle" data-i18n-aria-label="refreshTitle">
@@ -44,161 +53,416 @@
   </header>
 
   <main class="layout">
-    <section class="panel status-panel" aria-label="Runtime status">
+    <section id="runtimePanel" class="panel status-panel" aria-label="运行时状态">
       <div class="panel-title">
-        <h2 data-i18n="runtimeTitle">Runtime</h2>
+        <h2 data-i18n="runtimeTitle">运行时</h2>
         <span id="runtimeBadge" class="badge muted">-</span>
       </div>
 
-      <div class="field-row compact">
-        <label for="runtimeMode" data-i18n="runtimeModeLabel">Runtime mode</label>
-        <select id="runtimeMode">
-          <option value="cuda">cuda</option>
-          <option value="cpu">cpu</option>
-          <option value="directml">directml</option>
-          <option value="auto">auto</option>
-        </select>
-        <button id="applyRuntimeBtn" type="button" data-i18n="applyRuntime">Apply</button>
+      <div class="runtime-control-grid">
+        <label for="runtimeMode" class="runtime-mode-field">
+          <span data-i18n="runtimeModeLabel">运行模式</span>
+          <select id="runtimeMode" data-i18n-aria-label="runtimeModeLabel">
+            <option value="cuda">cuda</option>
+            <option value="cpu">cpu</option>
+            <option value="auto">自动</option>
+          </select>
+        </label>
+        <button id="applyRuntimeBtn" type="button" data-i18n="applyRuntime">应用</button>
+        <label for="unloadSessions" class="toggle-row runtime-toggle" data-i18n-title="unloadSessionsTitle">
+          <input id="unloadSessions" type="checkbox">
+          <span data-i18n="unloadSessionsLabel">卸载已加载会话</span>
+        </label>
       </div>
 
-      <label class="toggle-row runtime-toggle" data-i18n-title="unloadSessionsTitle">
-        <input id="unloadSessions" type="checkbox">
-        <span data-i18n="unloadSessionsLabel">Unload loaded sessions</span>
-      </label>
-
-      <dl class="facts compact-facts">
-        <div><dt data-i18n="modeLabel">Mode</dt><dd id="runtimeCurrent">-</dd></div>
-        <div><dt data-i18n="selectedLabel">Selected</dt><dd id="selectedProviders" class="pill-line">-</dd></div>
-        <div><dt data-i18n="availableLabel">Available</dt><dd id="availableProviders" class="pill-line">-</dd></div>
-        <div><dt data-i18n="loadedLabel">Loaded</dt><dd id="loadedCharacters" class="pill-line">-</dd></div>
+      <div class="module-head" data-i18n="listenModuleTitle">监听</div>
+      <div class="listen-grid">
+        <label for="listenHost"><span data-i18n="listenHostLabel">监听 IP</span>
+          <select id="listenHost" data-i18n-aria-label="listenHostLabel"></select>
+        </label>
+        <label for="listenPort"><span data-i18n="listenPortLabel">端口</span>
+          <input id="listenPort" type="number" min="0" max="65535" step="1" list="listenPortOptions" data-i18n-aria-label="listenPortLabel">
+          <datalist id="listenPortOptions"></datalist>
+        </label>
+        <button id="applyListenBtn" type="button" class="secondary" data-i18n="applyListen">应用监听</button>
+      </div>
+      <dl class="facts compact-facts listen-facts">
+        <div><dt data-i18n="listenCurrentLabel">当前</dt><dd id="listenCurrent">-</dd></div>
+        <div><dt data-i18n="listenReachLabel">可达</dt><dd id="listenReach">-</dd></div>
       </dl>
 
-      <div class="section-head" data-i18n="sessionProvidersTitle">Session providers</div>
+      <dl class="facts compact-facts">
+        <div><dt data-i18n="modeLabel">模式</dt><dd id="runtimeCurrent">-</dd></div>
+        <div><dt data-i18n="selectedLabel">已选</dt><dd id="selectedProviders" class="pill-line">-</dd></div>
+        <div><dt data-i18n="availableLabel">可用</dt><dd id="availableProviders" class="pill-line">-</dd></div>
+        <div><dt data-i18n="loadedLabel">已加载</dt><dd id="loadedCharacters" class="pill-line">-</dd></div>
+      </dl>
+
+      <div class="section-head" data-i18n="sessionProvidersTitle">会话提供方</div>
       <div id="sessionProviders" class="session-list">-</div>
 
-      <div class="section-head" data-i18n="activityTitle">Activity</div>
+      <div class="section-head memory-title-row">
+        <span data-i18n="memoryModuleTitle">资源监控</span>
+        <span id="memoryBadge" class="badge muted">-</span>
+      </div>
+      <dl class="facts compact-facts memory-facts">
+        <div><dt data-i18n="memoryCpuLabel">CPU</dt><dd id="memoryCpuState">-</dd></div>
+        <div><dt data-i18n="memoryRamLabel">内存</dt><dd id="memoryRamState">-</dd></div>
+        <div><dt data-i18n="memoryProcessLabel">进程</dt><dd id="memoryProcessState">-</dd></div>
+        <div><dt data-i18n="memoryGpuLabel">GPU</dt><dd id="memoryGpuState">-</dd></div>
+        <div><dt data-i18n="memoryVramLabel">显存</dt><dd id="memoryVramState">-</dd></div>
+        <div><dt data-i18n="memoryPolicyLabel">策略</dt><dd id="memoryPolicyState">-</dd></div>
+        <div><dt data-i18n="memoryParallelLabel">并行</dt><dd id="memoryParallelState">-</dd></div>
+        <div><dt data-i18n="memoryCacheLabel">缓存</dt><dd id="memoryCacheState">-</dd></div>
+      </dl>
+      <div class="button-row memory-actions">
+        <button id="refreshMemoryBtn" type="button" class="secondary small" data-i18n="refreshMemory">刷新资源</button>
+        <button id="releaseSessionsBtn" type="button" class="secondary small" data-i18n="releaseSessions">释放会话</button>
+        <button id="clearMemoryCacheBtn" type="button" class="secondary small" data-i18n="clearMemoryCache">清参考缓存</button>
+      </div>
+      <p id="memoryNote" class="note-line">-</p>
+
+      <div class="section-head" data-i18n="activityTitle">活动</div>
       <dl class="facts compact-facts">
-        <div><dt data-i18n="busyLabel">Busy</dt><dd id="busyState" class="pill-line">-</dd></div>
-        <div><dt data-i18n="activeSessionLabel">Session</dt><dd id="activeSession" class="pill-line">-</dd></div>
-        <div><dt data-i18n="jobsLabel">Jobs</dt><dd id="jobState" class="pill-line">-</dd></div>
-        <div><dt data-i18n="readerLabel">Reader</dt><dd id="readerState" class="pill-line">-</dd></div>
+        <div><dt data-i18n="busyLabel">忙碌</dt><dd id="busyState" class="pill-line">-</dd></div>
+        <div><dt data-i18n="activeSessionLabel">会话</dt><dd id="activeSession" class="pill-line">-</dd></div>
+        <div><dt data-i18n="jobsLabel">作业</dt><dd id="jobState" class="pill-line">-</dd></div>
+        <div><dt data-i18n="readerLabel">阅读</dt><dd id="readerState" class="pill-line">-</dd></div>
       </dl>
     </section>
 
-    <section class="panel form-panel" aria-label="TTS parameters">
+    <section id="synthesisPanel" class="panel form-panel" aria-label="TTS 参数">
       <div class="panel-title">
-        <h2 data-i18n="synthesisTitle">Synthesis</h2>
-        <span id="preparedBadge" class="badge muted" data-i18n="notLoaded">Not loaded</span>
+        <h2 data-i18n="synthesisTitle">合成</h2>
+        <span id="preparedBadge" class="badge muted" data-i18n="notLoaded">未加载</span>
       </div>
 
+      <div class="preset-toolbar">
+        <label for="presetSelect"><span data-i18n="presetSelectLabel">角色预设</span>
+          <select id="presetSelect" data-i18n-aria-label="presetSelectLabel"></select>
+        </label>
+        <button id="applyPresetBtn" type="button" class="secondary small" data-i18n="applyPreset">套用预设</button>
+        <button id="savePresetBtn" type="button" class="secondary small" data-i18n="savePreset">保存当前</button>
+        <button id="deletePresetBtn" type="button" class="secondary small danger" data-i18n="deletePreset">删除手动</button>
+        <button id="refreshPresetsBtn" type="button" class="secondary small" data-i18n="refreshPresets">重新扫描</button>
+      </div>
+      <p id="presetHint" class="note-line">-</p>
+
+      <div class="module-head" data-i18n="voiceModuleTitle">角色</div>
       <div class="grid two">
-        <label><span data-i18n="characterNameLabel">Character</span>
-          <input id="characterName" type="text" autocomplete="off">
+        <label for="characterName"><span data-i18n="characterNameLabel">角色</span>
+          <input id="characterName" list="characterNameOptions" autocomplete="off" data-i18n-aria-label="characterNameLabel">
+          <datalist id="characterNameOptions"></datalist>
         </label>
-        <label><span data-i18n="languageLabel">Language</span>
-          <input id="language" type="text" autocomplete="off">
+        <label for="language"><span data-i18n="languageLabel">语言</span>
+          <select id="language" data-i18n-aria-label="languageLabel"></select>
         </label>
       </div>
 
-      <label><span data-i18n="modelDirLabel">ONNX model directory</span>
-        <input id="modelDir" type="text" autocomplete="off">
+      <label for="modelDir"><span data-i18n="modelDirLabel">ONNX 模型目录</span>
+        <input id="modelDir" list="modelDirOptions" autocomplete="off" data-i18n-aria-label="modelDirLabel">
+        <datalist id="modelDirOptions"></datalist>
       </label>
 
-      <label><span data-i18n="referenceAudioLabel">Reference audio path</span>
-        <input id="referenceAudio" type="text" autocomplete="off">
+      <label for="referenceAudio"><span data-i18n="referenceAudioLabel">参考音频路径</span>
+        <input id="referenceAudio" list="referenceAudioOptions" autocomplete="off" data-i18n-aria-label="referenceAudioLabel">
+        <datalist id="referenceAudioOptions"></datalist>
       </label>
 
-      <label><span data-i18n="referenceTextLabel">Reference text</span>
-        <textarea id="referenceText" rows="2"></textarea>
+      <label for="referenceText"><span data-i18n="referenceTextLabel">参考文本</span>
+        <textarea id="referenceText" rows="2" data-i18n-aria-label="referenceTextLabel"></textarea>
       </label>
 
-      <label class="text-label"><span data-i18n="inputTextLabel">Input text</span>
-        <span id="textStats" class="input-stat">0 chars</span>
-        <textarea id="inputText" rows="10"></textarea>
+      <div class="module-head" data-i18n="textModuleTitle">文本输入</div>
+      <label for="inputText" class="text-label"><span data-i18n="inputTextLabel">输入文本</span>
+        <span id="textStats" class="input-stat">0 字符</span>
+        <textarea id="inputText" rows="10" data-i18n-aria-label="inputTextLabel"></textarea>
       </label>
 
-      <div class="grid two tight">
-        <label class="toggle-row">
-          <input id="splitSentence" type="checkbox" checked>
-          <span data-i18n="splitSentenceLabel">Smart sentence split</span>
+      <div class="module-head" data-i18n="textFileTitle">TXT 文件</div>
+      <div class="file-row">
+        <label for="textFileInput" class="file-picker">
+          <span data-i18n="textFilePickerLabel">选择 .txt 文件</span>
+          <input id="textFileInput" type="file" accept=".txt,text/plain" data-i18n-aria-label="textFilePickerLabel">
         </label>
-        <label><span data-i18n="endpointModeLabel">Endpoint</span>
-          <select id="endpointMode">
-            <option value="wav" data-i18n="modeCompleteWav">Complete WAV - /tts/wav</option>
-            <option value="legado-buffered" data-i18n="modeLegadoBuffered">Legado buffered - stable</option>
-            <option value="legado-stream" data-i18n="modeLegadoStream">Legado stream - low latency</option>
-            <option value="stream-wav" data-i18n="modeStreamWav">Stream WAV - generic</option>
-            <option value="raw" data-i18n="modeRawPcm">Raw PCM - download</option>
-            <option value="job" data-i18n="modeJob">Queued job - long text</option>
+        <span id="textFileMeta" class="input-stat">-</span>
+        <button id="clearTextFileBtn" type="button" class="secondary small" data-i18n="clearTextFile">清除文件</button>
+      </div>
+
+      <div class="module-head" data-i18n="endpointModuleTitle">合成路径</div>
+      <div class="grid two tight">
+        <label for="splitSentence" class="toggle-row">
+          <input id="splitSentence" type="checkbox" checked>
+          <span data-i18n="splitSentenceLabel">智能分句</span>
+        </label>
+        <label for="endpointMode"><span data-i18n="endpointModeLabel">端点</span>
+          <select id="endpointMode" data-i18n-aria-label="endpointModeLabel">
+            <optgroup data-i18n-label="endpointGroupRecommended" label="推荐">
+              <option value="wav" data-i18n="modeCompleteWav">快速试听 - /tts/wav</option>
+              <option value="legado-buffered" data-i18n="modeLegadoBuffered">听书稳定 - 缓冲</option>
+            </optgroup>
+            <optgroup data-i18n-label="endpointGroupLowLatency" label="低延迟 / 开发">
+              <option value="legado-stream" data-i18n="modeLegadoStream">听书低延迟 - 流式</option>
+              <option value="stream-wav" data-i18n="modeStreamWav">通用流式 - WAV 文件</option>
+              <option value="raw" data-i18n="modeRawPcm">开发调试 - 原始 PCM</option>
+            </optgroup>
+            <optgroup data-i18n-label="endpointGroupLongText" label="长文本">
+              <option value="job" data-i18n="modeJob">长文本作业 - 有序文件</option>
+            </optgroup>
           </select>
+        </label>
+      </div>
+      <p id="endpointModeHint" class="note-line">-</p>
+
+      <div id="parallelCapability" class="capability-strip" role="status" aria-live="polite">
+        <span data-i18n="parallelCapabilityLabel">执行能力</span>
+        <strong id="parallelCapabilityState">-</strong>
+        <small id="parallelCapabilityReason">-</small>
+      </div>
+      <div class="grid two tight" id="parallelControls">
+        <label for="parallelEnabled" class="toggle-row" data-i18n-title="parallelToggleTitle">
+          <input id="parallelEnabled" type="checkbox">
+          <span data-i18n="parallelEnabledLabel">并行推理</span>
+        </label>
+        <label for="parallelWorkers"><span data-i18n="parallelWorkersLabel">线程数</span>
+          <input id="parallelWorkers" type="text" inputmode="text" list="parallelWorkerOptions" autocomplete="off" data-i18n-aria-label="parallelWorkersLabel" data-i18n-placeholder="parallelWorkersPlaceholder">
+          <datalist id="parallelWorkerOptions"></datalist>
         </label>
       </div>
 
       <div class="button-row">
-        <button id="loadCharacterBtn" type="button" data-i18n="loadCharacter">Load</button>
-        <button id="setReferenceBtn" type="button" data-i18n="setReference">Reference</button>
-        <button id="prepareBtn" type="button" class="secondary" data-i18n="prepare">Load + reference</button>
-        <button id="clearCacheBtn" type="button" class="secondary" data-i18n="clearCache">Clear cache</button>
-        <button id="restoreDefaultsBtn" type="button" class="secondary" data-i18n="restoreDefaults">Defaults</button>
-        <button id="generateBtn" type="button" class="primary" data-i18n="generate">Generate</button>
+        <button id="loadCharacterBtn" type="button" class="secondary" data-i18n="loadCharacter">加载</button>
+        <button id="setReferenceBtn" type="button" class="secondary" data-i18n="setReference">参考</button>
+        <button id="prepareBtn" type="button" data-i18n="prepare">加载 + 参考</button>
+        <button id="clearCacheBtn" type="button" class="secondary" data-i18n="clearCache">清缓存</button>
+        <button id="restoreDefaultsBtn" type="button" class="secondary" data-i18n="restoreDefaults">默认</button>
+        <button id="generateBtn" type="button" class="primary" data-i18n="generate">生成</button>
       </div>
     </section>
 
-    <section class="panel output-panel" aria-label="Output and diagnostics">
+    <section id="outputPanel" class="panel output-panel" aria-label="输出和诊断">
       <div class="panel-title">
-        <h2 data-i18n="outputTitle">Output</h2>
-        <span id="requestBadge" class="badge muted" data-i18n="requestIdle">Idle</span>
+        <h2 data-i18n="outputTitle">输出</h2>
+        <span id="requestBadge" class="badge muted" data-i18n="requestIdle">空闲</span>
       </div>
 
-      <div class="format-list" aria-label="Audio formats">
-        <div><strong data-i18n="rawPcmTitle">Raw PCM</strong><span data-i18n="rawPcmDesc">pcm_s16le, 32000 Hz, mono</span></div>
-        <div><strong data-i18n="streamWavTitle">Stream WAV</strong><span data-i18n="streamWavDesc">chunked audio/wav</span></div>
-        <div><strong data-i18n="bufferedWavTitle">Buffered WAV</strong><span data-i18n="bufferedWavDesc">complete file after synthesis</span></div>
-        <div><strong data-i18n="jobWavTitle">Job WAV</strong><span data-i18n="jobWavDesc">queued output file</span></div>
+      <div class="format-list" aria-label="音频格式">
+        <div><strong data-i18n="rawPcmTitle">原始 PCM</strong><span data-i18n="rawPcmDesc">pcm_s16le，32000 Hz，单声道</span></div>
+        <div><strong data-i18n="streamWavTitle">流式 WAV</strong><span data-i18n="streamWavDesc">分块 audio/wav</span></div>
+        <div><strong data-i18n="bufferedWavTitle">缓冲 WAV</strong><span data-i18n="bufferedWavDesc">合成后完整文件</span></div>
+        <div><strong data-i18n="jobWavTitle">作业 WAV</strong><span data-i18n="jobWavDesc">队列输出文件</span></div>
       </div>
 
       <audio id="audioPlayer" controls></audio>
-      <a id="downloadLink" class="download disabled" href="#" download data-i18n="downloadOutput">Download output</a>
+      <a id="downloadLink" class="download disabled" href="#" download data-i18n="downloadOutput">下载输出</a>
 
       <dl class="facts response-facts">
-        <div><dt data-i18n="responseModeLabel">Mode</dt><dd id="responseMode">-</dd></div>
-        <div><dt data-i18n="responseBytesLabel">Bytes</dt><dd id="responseBytes">-</dd></div>
-        <div><dt data-i18n="responseElapsedLabel">Elapsed</dt><dd id="responseElapsed">-</dd></div>
-        <div><dt data-i18n="responseFormatLabel">Format</dt><dd id="responseFormat">-</dd></div>
+        <div><dt data-i18n="responseModeLabel">模式</dt><dd id="responseMode">-</dd></div>
+        <div><dt data-i18n="responseBytesLabel">字节</dt><dd id="responseBytes">-</dd></div>
+        <div><dt data-i18n="responseElapsedLabel">耗时</dt><dd id="responseElapsed">-</dd></div>
+        <div><dt data-i18n="responseFormatLabel">格式</dt><dd id="responseFormat">-</dd></div>
       </dl>
 
-      <div id="jobBox" class="job-box hidden">
-        <div class="job-head">
-          <strong data-i18n="jobTitle">Job</strong>
-          <button id="cancelJobBtn" type="button" class="small danger" data-i18n="cancelJob">Cancel</button>
+      <div id="progressBox" class="progress-box">
+        <div class="progress-head">
+          <strong data-i18n="progressTitle">进度</strong>
+          <span id="progressPercent" class="badge muted">0%</span>
         </div>
-        <dl class="facts compact-facts">
-          <div><dt data-i18n="jobIdLabel">Job id</dt><dd id="jobId">-</dd></div>
-          <div><dt data-i18n="jobStatusLabel">Status</dt><dd id="jobStatus">-</dd></div>
-          <div><dt data-i18n="jobStageLabel">Stage</dt><dd id="jobStage">-</dd></div>
-          <div><dt data-i18n="jobMessageLabel">Message</dt><dd id="jobMessage">-</dd></div>
+        <div class="progress-track" aria-label="合成进度">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <dl class="facts compact-facts progress-facts">
+          <div><dt data-i18n="progressStageLabel">阶段</dt><dd id="progressStage">-</dd></div>
+          <div><dt data-i18n="progressMessageLabel">消息</dt><dd id="progressMessage">-</dd></div>
+          <div><dt data-i18n="progressSegmentsLabel">分段</dt><dd id="progressSegments">-</dd></div>
+          <div><dt data-i18n="progressCharsLabel">字符</dt><dd id="progressChars">-</dd></div>
+          <div><dt data-i18n="progressElapsedLabel">耗时</dt><dd id="progressElapsed">-</dd></div>
+          <div><dt data-i18n="progressEtaLabel">剩余</dt><dd id="progressEta">-</dd></div>
+          <div><dt data-i18n="progressBytesLabel">音频</dt><dd id="progressBytes">-</dd></div>
+          <div><dt data-i18n="progressModeLabel">端点</dt><dd id="progressMode">-</dd></div>
+          <div><dt data-i18n="progressParallelLabel">并行</dt><dd id="progressParallel">-</dd></div>
         </dl>
       </div>
 
-      <div class="section-title-row">
-        <div class="section-head" data-i18n="logTitle">Log</div>
-        <button id="clearLogBtn" type="button" class="icon-btn small" data-i18n-title="clearLogTitle" data-i18n-aria-label="clearLogTitle">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5M14 11v5"/></svg>
-        </button>
+      <div id="jobBox" class="job-box hidden">
+        <div class="job-head">
+          <strong data-i18n="jobTitle">作业</strong>
+          <div class="job-actions">
+            <button id="cancelJobBtn" type="button" class="small danger" data-i18n="cancelJob">取消</button>
+            <button id="clearJobBtn" type="button" class="small secondary" data-i18n="clearJob">清除</button>
+          </div>
+        </div>
+        <dl class="facts compact-facts">
+          <div><dt data-i18n="jobIdLabel">作业 id</dt><dd id="jobId">-</dd></div>
+          <div><dt data-i18n="jobStatusLabel">状态</dt><dd id="jobStatus">-</dd></div>
+          <div><dt data-i18n="jobStageLabel">阶段</dt><dd id="jobStage">-</dd></div>
+          <div><dt data-i18n="jobMessageLabel">消息</dt><dd id="jobMessage">-</dd></div>
+        </dl>
       </div>
-      <pre id="logBox" class="log"></pre>
+    </section>
 
-      <details class="json-details">
-        <summary data-i18n="runtimeJsonTitle">Runtime JSON</summary>
+    <section id="conversionPanel" class="panel conversion-panel" aria-label="GPT-SoVITS 模型转换">
+      <div class="panel-title">
+        <h2 data-i18n="conversionTitle">模型转换</h2>
+        <span id="conversionBadge" class="badge muted" data-i18n="conversionIdle">未扫描</span>
+      </div>
+
+      <div class="module-head" data-i18n="conversionInputTitle">GPT-SoVITS 文件夹</div>
+      <label for="conversionFolders"><span data-i18n="conversionFoldersLabel">源文件夹路径</span>
+        <textarea id="conversionFolders" rows="4" data-i18n-placeholder="conversionFoldersPlaceholder" data-i18n-aria-label="conversionFoldersLabel"></textarea>
+      </label>
+
+      <div class="conversion-options">
+        <label for="conversionOutputRoot"><span data-i18n="conversionOutputRootLabel">输出根目录</span>
+          <input id="conversionOutputRoot" autocomplete="off" data-i18n-aria-label="conversionOutputRootLabel">
+        </label>
+        <label for="conversionOverwrite" class="toggle-row conversion-overwrite" data-i18n-title="conversionOverwriteTitle">
+          <input id="conversionOverwrite" type="checkbox">
+          <span data-i18n="conversionOverwriteLabel">覆盖已有输出</span>
+        </label>
+      </div>
+
+      <div class="button-row conversion-actions">
+        <button id="scanConversionBtn" type="button" class="secondary" data-i18n="scanConversion">扫描</button>
+        <button id="startConversionBtn" type="button" class="primary" data-i18n="startConversion">开始转换</button>
+        <button id="refreshConversionBtn" type="button" class="secondary" data-i18n="refreshConversion">刷新任务</button>
+      </div>
+
+      <dl class="facts compact-facts conversion-facts">
+        <div><dt data-i18n="conversionOutputRootLabel">输出根目录</dt><dd id="conversionOutputRootState">-</dd></div>
+        <div><dt data-i18n="conversionValidLabel">有效</dt><dd id="conversionValidState">-</dd></div>
+        <div><dt data-i18n="conversionJobLabel">任务</dt><dd id="conversionJobState">-</dd></div>
+        <div><dt data-i18n="conversionProgressLabel">进度</dt><dd id="conversionProgressState">-</dd></div>
+      </dl>
+
+      <div id="conversionList" class="conversion-list"></div>
+
+      <details class="json-details log-details" open>
+        <summary data-i18n="conversionLogTitle">转换日志</summary>
+        <pre id="conversionLog" class="log"></pre>
+      </details>
+    </section>
+
+    <section id="readerPanel" class="panel reader-panel" aria-label="阅读和 Legado 设置">
+      <div class="panel-title">
+        <h2 data-i18n="readerSettingsTitle">阅读 / Legado</h2>
+        <span id="readerBadge" class="badge ok" data-i18n="readerRecommended">推荐缓冲模式</span>
+      </div>
+
+      <dl class="facts compact-facts reader-facts">
+        <div><dt data-i18n="readerApiBaseLabel">API 基址</dt><dd id="readerApiBase">-</dd></div>
+        <div><dt data-i18n="readerLanBaseLabel">LAN 基址</dt><dd id="readerLanApiBase">-</dd></div>
+        <div><dt data-i18n="readerBufferedLabel">缓冲 URL</dt><dd id="readerBufferedUrl">-</dd></div>
+        <div><dt data-i18n="readerStreamLabel">流式 URL</dt><dd id="readerStreamUrl">-</dd></div>
+        <div><dt data-i18n="readerCharacterLabel">角色</dt><dd id="readerDefaultCharacter">-</dd></div>
+        <div><dt data-i18n="readerSplitLabel">分句</dt><dd id="readerSplitSentence">-</dd></div>
+        <div><dt data-i18n="readerTimeoutLabel">超时</dt><dd id="readerWaitTimeout">-</dd></div>
+        <div><dt data-i18n="readerModeLabel">模式</dt><dd id="readerMode">-</dd></div>
+      </dl>
+
+      <div class="button-row reader-actions">
+        <button id="copyReaderApiBtn" type="button" class="secondary small" data-i18n="copyApiBase">复制 API</button>
+        <button id="copyReaderLanBtn" type="button" class="secondary small" data-i18n="copyLanBase">复制 LAN</button>
+        <button id="copyLegadoBufferedBtn" type="button" class="primary small" data-i18n="copyBufferedUrl">复制缓冲 URL</button>
+        <button id="copyLegadoStreamBtn" type="button" class="secondary small" data-i18n="copyStreamUrl">复制流式 URL</button>
+        <button id="copyLegadoJsLibBtn" type="button" class="secondary small" data-i18n="copyJsLib">复制 jsLib</button>
+        <button id="copyLegadoJsonBtn" type="button" class="secondary small" data-i18n="copyJsonTemplate">复制 JSON</button>
+      </div>
+
+      <div class="reader-field-list">
+        <div class="reader-field-row">
+          <div class="reader-field-meta">
+            <span>name</span>
+            <code id="readerFieldName">-</code>
+          </div>
+          <button id="copyReaderFieldNameBtn" type="button" class="secondary small" data-i18n="copyField">复制</button>
+        </div>
+        <div class="reader-field-row">
+          <div class="reader-field-meta">
+            <span>url</span>
+            <code id="readerFieldUrl">-</code>
+          </div>
+          <button id="copyReaderFieldUrlBtn" type="button" class="secondary small" data-i18n="copyField">复制</button>
+        </div>
+        <div class="reader-field-row">
+          <div class="reader-field-meta">
+            <span>Content-Type</span>
+            <code id="readerFieldContentType">-</code>
+          </div>
+          <button id="copyReaderFieldContentTypeBtn" type="button" class="secondary small" data-i18n="copyField">复制</button>
+        </div>
+        <div class="reader-field-row">
+          <div class="reader-field-meta">
+            <span>concurrentRate</span>
+            <code id="readerFieldConcurrentRate">-</code>
+          </div>
+          <button id="copyReaderFieldConcurrentRateBtn" type="button" class="secondary small" data-i18n="copyField">复制</button>
+        </div>
+      </div>
+
+      <div class="snippet-grid">
+        <div class="snippet-block"><span data-i18n="readerJsLibLabel">推荐 jsLib</span>
+          <pre id="readerJsLib" class="snippet-preview"></pre>
+        </div>
+        <div class="snippet-block"><span data-i18n="readerJsonLabel">可导入 JSON</span>
+          <pre id="readerJsonTemplate" class="snippet-preview"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="endpointPanel" class="panel endpoint-panel" aria-label="端点目录">
+      <div class="panel-title">
+        <h2 data-i18n="endpointCatalogTitle">端点</h2>
+        <span id="endpointCountBadge" class="badge muted">-</span>
+      </div>
+      <div id="endpointCatalog" class="endpoint-list"></div>
+    </section>
+
+    <section id="activityPanel" class="panel activity-panel" aria-label="活动和状态">
+      <div class="panel-title">
+        <h2 data-i18n="activityPanelTitle">活动</h2>
+        <div class="panel-actions">
+          <span id="activityJournalBadge" class="badge muted">-</span>
+          <button id="clearLogBtn" type="button" class="icon-btn small" data-i18n-title="clearLogTitle" data-i18n-aria-label="clearLogTitle">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5M14 11v5"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="activity-grid">
+        <section class="activity-column">
+          <div class="section-head"><span data-i18n="activityDirectTitle">直接</span><span id="directActivityBadge" class="badge muted">-</span></div>
+          <div id="directActivityList" class="activity-list"></div>
+        </section>
+        <section class="activity-column">
+          <div class="section-head"><span data-i18n="activityStreamTitle">流式</span><span id="streamActivityBadge" class="badge muted">-</span></div>
+          <div id="streamActivityList" class="activity-list"></div>
+        </section>
+        <section class="activity-column">
+          <div class="section-head"><span data-i18n="activityJobTitle">作业</span><span id="jobActivityBadge" class="badge muted">-</span></div>
+          <div id="jobActivityList" class="activity-list"></div>
+        </section>
+        <section class="activity-column">
+          <div class="section-head"><span data-i18n="activityReaderTitle">阅读</span><span id="readerActivityBadge" class="badge muted">-</span></div>
+          <div id="readerActivityList" class="activity-list"></div>
+        </section>
+      </div>
+
+      <details class="json-details" open>
+        <summary data-i18n="runtimeJsonTitle">运行时 JSON</summary>
         <pre id="runtimeJson" class="json-preview"></pre>
       </details>
-      <details class="json-details">
-        <summary data-i18n="statusJsonTitle">Status JSON</summary>
+      <details class="json-details" open>
+        <summary data-i18n="statusJsonTitle">状态 JSON</summary>
         <pre id="statusJson" class="json-preview"></pre>
+      </details>
+      <details class="json-details log-details" open>
+        <summary data-i18n="logTitle">日志</summary>
+        <pre id="logBox" class="log"></pre>
       </details>
     </section>
   </main>
 
-  <script src="/ui/assets/app.js?v=20260629-webui3"></script>
+  <script src="/ui/assets/app.js?v=20260630-webui11"></script>
 </body>
 </html>

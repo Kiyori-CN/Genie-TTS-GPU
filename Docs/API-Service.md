@@ -36,8 +36,9 @@ CPU fallback server:
 E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cpu -HostName 127.0.0.1 -Port 8000
 ```
 
-Runtime mode must be selected before model loading. Valid modes are `cpu`,
-`cuda`, `directml`, and `auto`. The server should normally use one worker.
+Runtime mode must be selected before model loading. The WebUI exposes `cpu`,
+`cuda`, and `auto`. Other backend compatibility modes are not presented as
+memory-sharing features. The server should normally use one worker.
 Multiple workers duplicate model memory and do not share loaded characters.
 
 ## Default Chinese Character
@@ -98,8 +99,31 @@ Legado-compatible WAV responses, submit/poll job API requests, and refresh
 `/health`, `/runtime`, and `/status`.
 
 `GET /ui/config` returns WebUI defaults for the local `feibi` Chinese character,
-endpoint paths, audio-format descriptions, and dynamic access URLs. LAN IPs are
+endpoint paths, audio-format descriptions, dynamic access URLs, Reader/Legado
+copy templates, and a compact endpoint catalog for the browser UI. LAN IPs are
 detected at request time and are not stored in config.
+
+Important WebUI-only metadata:
+
+```text
+access.local_api_base_url      localhost API base for browser-side copying
+access.lan_api_base_urls       detected LAN API bases, not persisted
+reader.urls.legado_buffered_url recommended Android/Legado URL
+reader.urls.legado_stream_url   low-latency stream URL
+reader.templates.recommended_jslib Legado jsLib using mode=buffered
+reader.templates.recommended_json  importable httpTTS JSON fragment
+reader.templates.recommended_fields copy rows for name/url/Content-Type/concurrentRate
+endpoint_catalog                scan-friendly endpoint purpose/format/use-case rows
+memory_policy                   compact memory/concurrency policy snapshot
+```
+
+The recommended Reader URL remains
+`/tts/legado.wav?wait_timeout=300&mode=buffered`.
+
+The browser UI renders direct, stream, job, and reader activity separately. Each
+visible request row shows request time, endpoint, mode, status, elapsed time,
+bytes, and any error. Job rows additionally surface progress, segment counts,
+ETA, output bytes, and the effective parallel strategy.
 
 ### POST /runtime/configure
 
@@ -109,12 +133,54 @@ Request:
 {"mode": "cuda", "unload_sessions": true}
 ```
 
-Valid modes are `cpu`, `cuda`, `directml`, and `auto`. This endpoint updates
-the provider order for sessions loaded after the call. Already loaded ONNX
+The WebUI uses `cpu`, `cuda`, and `auto`; other backend compatibility modes are
+not WebUI features. This endpoint updates the provider order for sessions loaded after the call. Already loaded ONNX
 sessions keep their existing providers until the character/shared models are
 reloaded or the process restarts, unless `unload_sessions=true` is supplied.
 When unloading is requested, the server rejects the request with `409` if a TTS
 session, reader request, or queued/running job is active.
+
+### GET /runtime/memory
+
+Returns GPU memory telemetry when `nvidia-smi.exe` is available in known NVIDIA
+install locations, plus the current memory and concurrency policy. The endpoint
+does not depend on global PATH and does not return request text.
+
+Important fields:
+
+```text
+policy.name                         currently single_session_serial
+policy.busy                         true when TTS, Job, or Reader work is active
+policy.loaded_character_count       loaded character session count
+policy.reference_cache_size         cached reference-audio entries
+policy.vram_note                    factual note that CUDA cannot borrow system RAM as app-level VRAM
+gpu_memory.gpus[]                   NVIDIA memory/utilization rows, when available
+parallel.job_strategy               gpu_segment_parallel when CUDA is selected, otherwise single_session_serial
+system_usage.*                      process/system CPU and memory samples when available
+actions.*.enabled                   whether WebUI buttons can run now
+```
+
+The WebUI resource panel is intentionally factual:
+
+- refresh memory: read `/runtime/memory`;
+- release sessions: unload currently loaded model sessions while idle;
+- clear reference cache: clear reference-audio preprocessing cache.
+
+These controls do not make CUDA use system RAM as extra VRAM. Shared-memory
+controls were removed from the WebUI because this package cannot prove a safe
+app-level CUDA VRAM expansion path.
+
+### POST /runtime/memory/action
+
+Request:
+
+```json
+{"action": "release_idle_sessions"}
+```
+
+Supported actions are `refresh`, `release_idle_sessions`, and
+`clear_reference_cache`. `release_idle_sessions` returns `409` while TTS, reader
+requests, or queued/running jobs are active.
 
 ### GET /runtime
 
@@ -309,7 +375,8 @@ Minimal Legado httpTTS rule shape:
   "url": "@js:genieTtsUrl(speakText, speakSpeed);",
   "contentType": "audio/wav",
   "concurrentRate": "1500",
-  "jsLib": "function genieTtsUrl(speakText, speakSpeed) {\n  var baseUrl = 'http://192.168.1.100:8000';\n  var body = JSON.stringify({character_name:'feibi', text:String(speakText || ''), split_sentence:true});\n  return baseUrl + '/tts/legado.wav?wait_timeout=300,' + JSON.stringify({method:'POST', headers:{'Content-Type':'application/json'}, body:body});\n}\n"
+  "enabledCookieJar": false,
+  "jsLib": "function genieTtsUrl(speakText, speakSpeed) {\n  var baseUrl = 'http://192.168.1.100:8000';\n  var body = JSON.stringify({character_name:'feibi', text:String(speakText || ''), split_sentence:true});\n  return baseUrl + '/tts/legado.wav?wait_timeout=300&mode=buffered,' + JSON.stringify({method:'POST', headers:{'Content-Type':'application/json'}, body:body});\n}\n"
 }
 ```
 
@@ -327,6 +394,32 @@ Direct `/tts/raw` and `/tts/wav` requests still receive `409` while a job is
 actively synthesizing. If a job is waiting for a direct request to finish, it can
 be cancelled without stopping that direct request.
 
+`/jobs/tts` supports real GPU segment parallelism when the selected provider is
+`CUDAExecutionProvider`, the character's loaded ONNX sessions are CUDA-backed,
+and `parallel_enabled=true` with `parallel_workers` set to an integer greater
+than `1` or `"auto"`. The job worker splits text into ordered segments,
+synthesizes segments with a bounded thread pool, stores results by segment
+index, and writes the final WAV in the original text order. If CUDA is not
+selected, or the character is still loaded with non-CUDA sessions after a
+runtime switch, the server rejects parallel requests with HTTP `409` instead of
+silently pretending to run in parallel.
+
+Parallel inference is intentionally scoped to the queued Job API design. Direct,
+stream, and Reader/Legado calls are live responses: they must preserve immediate
+audio order, browser/player state, and request cancellation semantics. A Job can
+split text into segments, synthesize in the background, keep per-segment state,
+cancel/retry safely, and merge output by segment index before exposing
+`/jobs/{job_id}/wav`. Worker count is capped by the server because higher values
+raise peak VRAM use and can fail with OOM on smaller GPUs.
+
+The default service cap is `8`, can be raised with
+`GENIE_TTS_MAX_PARALLEL_WORKERS`, and is never allowed above `32`. The effective
+worker count is also capped by the number of text segments. Check
+`parallel.requested_workers`, `parallel.effective_workers`,
+`parallel.max_workers`, `parallel.reason`, and `progress.parallel` to see what
+actually ran. Higher worker counts do not guarantee linear speedup; benchmark
+the same text with the same character/reference and watch VRAM headroom.
+
 Job output WAV files are written under `E:\Genie-TTS\UserData\Jobs` by default.
 `UserData/` is ignored by git and should be treated as runtime state.
 
@@ -341,7 +434,9 @@ Request:
 {
   "character_name": "feibi",
   "text": "清晨的城市逐渐苏醒，街边的灯光还没有完全熄灭。她合上手里的书，抬头望向窗外，决定把今天的计划重新整理一遍。为了模拟小说和文档朗读的实际场景，这段文本会被自动切分成多个句子，并连续生成可以下载的语音。",
-  "split_sentence": true
+  "split_sentence": true,
+  "parallel_enabled": true,
+  "parallel_workers": "auto"
 }
 ```
 
@@ -357,6 +452,26 @@ Response is HTTP `202`:
     "split_sentence": true,
     "stage": "queued",
     "message": "Queued for synthesis.",
+    "progress": {
+      "total_chars": 92,
+      "completed_chars": 0,
+      "total_segments": 3,
+      "completed_segments": 0,
+      "generated_pcm_bytes": 0,
+      "elapsed_seconds": 0.0,
+      "estimated_remaining_seconds": null,
+      "estimated_total_seconds": null,
+      "percent": 0.0
+    },
+    "parallel": {
+      "enabled": true,
+      "requested_workers": "auto",
+      "effective": false,
+      "effective_workers": 1,
+      "max_workers": 8,
+      "strategy": "gpu_segment_parallel",
+      "reason": "Real parallel synthesis is available only for queued jobs on CUDA."
+    },
     "output_path": "E:\\Genie-TTS\\UserData\\Jobs\\7f6f0d0d5b2d4f3a8b6d7f0f8d1e6a44.wav",
     "audio_format": "wav_pcm_s16le",
     "media_type": "audio/wav",
@@ -366,6 +481,11 @@ Response is HTTP `202`:
   }
 }
 ```
+
+The initial `202` response confirms that the request was accepted. The exact
+parallel worker count is chosen when the job starts, after text segmentation and
+VRAM sampling. Poll `GET /jobs/{job_id}` to read the final
+`parallel.effective_workers` and `parallel.reason`.
 
 #### GET /jobs
 
@@ -397,6 +517,15 @@ created_at, started_at, finished_at  UTC timestamps
 text_chars                           input text length
 split_sentence                       whether smart sentence splitting was used
 stage, message                       current progress message
+progress                             long-text progress and ETA object
+progress.total_chars                 total input characters
+progress.completed_chars             completed input characters
+progress.total_segments              total smart-split segments
+progress.completed_segments          completed segments
+progress.percent                     completion percentage, 0-100
+progress.estimated_remaining_seconds estimated remaining synthesis time or null
+progress.estimated_total_seconds     estimated total synthesis time or null
+parallel                             requested/effective parallel settings
 output_path, output_exists           package-local WAV path and existence flag
 output_bytes                         complete WAV bytes after completion
 generated_pcm_bytes                  generated raw PCM bytes while running
@@ -458,8 +587,8 @@ Common client-visible errors:
 
 The API currently accepts one active TTS session per process. External callers
 should serialize requests or handle `409` with retry/backoff. For Legado reader
-playback, prefer `/tts/legado.wav?wait_timeout=300` so paragraph requests wait
-instead of failing during normal preloading.
+playback, prefer `/tts/legado.wav?wait_timeout=300&mode=buffered` so paragraph
+requests wait and Android players receive complete WAV responses.
 
 ## Client Example
 

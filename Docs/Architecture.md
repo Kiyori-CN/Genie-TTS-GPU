@@ -50,6 +50,8 @@ The FastAPI server owns the HTTP contract and request coordination:
 - WebUI: `/ui`, `/ui/config`, and static assets under `/ui/assets`.
 - Runtime selection API: `/runtime/configure` for sessions loaded after the
   change.
+- Memory policy API: `/runtime/memory` and `/runtime/memory/action` for GPU
+  telemetry, cache/session release controls, and reference-cache cleanup.
 
 The server also defines audio response helpers for raw PCM, stream WAV, and
 complete WAV responses. It performs request parsing for JSON, form, and query
@@ -58,7 +60,16 @@ for Legado rules.
 
 The WebUI is intentionally thin and local to the FastAPI service: static files
 live under `src\genie_tts\WebUI`, and the page calls the existing HTTP API
-instead of bypassing server semantics.
+instead of bypassing server semantics. `/ui/config` supplies dynamic local/LAN
+access URLs, Reader/Legado copy templates, endpoint catalog rows, character
+presets, language options, and capability flags such as the current
+`single_session_serial` Job execution strategy.
+It also supplies a compact memory-policy snapshot so the UI can explain that
+CUDA does not expose a safe system-RAM-as-VRAM switch from this application.
+The browser surface is split into runtime, synthesis, output, Reader/Legado,
+endpoint catalog, and activity panels. The activity panel keeps direct, stream,
+job, and reader request records separate instead of dumping raw JSON as the only
+diagnostic view.
 
 ## Model and Provider Layer
 
@@ -70,7 +81,8 @@ reporting.
 
 Important runtime states:
 
-- `runtime_mode`: requested mode such as `cpu`, `cuda`, `directml`, or `auto`.
+- `runtime_mode`: requested mode such as `cpu`, `cuda`, or `auto` from the
+  WebUI. Other backend compatibility modes are not WebUI features.
 - `selected_providers`: provider order requested for new ONNX sessions.
 - `available_providers`: providers reported by the imported ONNX Runtime wheel.
 - `loaded_models`: actual `get_providers()` results for each loaded character
@@ -81,6 +93,27 @@ Important runtime states:
 `CUDAExecutionProvider` appearing in `available_providers` is only a capability
 signal. The runtime is not proven until a real session is created and its
 provider list reports CUDA.
+
+## Memory and Concurrency Policy
+
+Source: memory helpers and endpoints in `src\genie_tts\Server.py`.
+
+The current policy is `single_session_serial`: one process owns one active
+`TTSPlayer` session, and loaded ONNX sessions are released only when the service
+is idle. `/runtime/memory` reports this policy, loaded character count,
+reference-cache count, runtime providers, process/system CPU and memory samples,
+optional NVIDIA GPU memory/utilization telemetry, and a factual VRAM note.
+
+The WebUI's memory controls are maintenance actions, not a CUDA VRAM expansion
+feature:
+
+- refresh memory: sample `/runtime/memory`;
+- release sessions: unload loaded character and shared ONNX sessions while idle;
+- clear reference cache: clear preprocessed reference-audio cache.
+
+CUDAExecutionProvider does not expose a safe app-level switch that fills VRAM
+with system memory. Shared-memory controls are not exposed in the WebUI because
+this package cannot prove a safe CUDA VRAM expansion path.
 
 ## TTS Session and Player Layer
 
@@ -115,7 +148,20 @@ cancelled, and downloaded as complete WAV files. Output files are written under
 single-session inference model.
 
 Job statuses are `queued`, `running`, `completed`, `failed`, and `cancelled`.
+Job snapshots include long-text progress fields for total/completed characters,
+total/completed segments, generated PCM/WAV bytes, elapsed time, ETA, and
+effective parallel strategy.
 Completed job WAV downloads are served from disk through `/jobs/{job_id}/wav`.
+
+Real GPU parallel synthesis is implemented only for queued jobs when CUDA is the
+selected provider and the loaded character sessions are actually CUDA-backed.
+The worker pre-splits text, runs a bounded segment thread pool, stores outputs
+by segment index, and exposes a final ordered WAV file. `parallel_workers`
+accepts an integer or `auto`; the effective count is capped by service policy,
+text segment count, and available CUDA memory. Direct, stream, and Reader/Legado
+responses remain live playback paths; parallel workers there would risk
+out-of-order audio, ambiguous cancellation, and higher peak VRAM usage without a
+recovery boundary.
 
 ## Reader and Legado Compatibility Layer
 

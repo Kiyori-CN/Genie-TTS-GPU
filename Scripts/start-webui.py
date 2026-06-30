@@ -199,6 +199,9 @@ def main() -> None:
     configure_package_environment()
     args = parse_args()
     port, changed_port = resolve_port(args.host, args.port, args.strict_port)
+    os.environ["GENIE_WEBUI_HOST"] = args.host
+    os.environ["GENIE_WEBUI_PORT"] = str(port)
+    os.environ["GENIE_WEBUI_RUNTIME"] = args.runtime
     local_url = f"http://127.0.0.1:{port}/ui"
     lan_addresses = get_lan_ipv4_addresses()
     lan_urls = [f"http://{address}:{port}/ui" for address in lan_addresses]
