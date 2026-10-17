@@ -1,21 +1,28 @@
-# Genie-TTS Windows Integration Package
+# Genie-TTS-GPU
+
+A Windows speech workspace for local and LAN use, built on Genie-TTS and GPT-SoVITS with CPU/CUDA runtime selection, a WebUI, HTTP APIs, and long-form jobs.
 
 [简体中文](./README_zh.md) | [English](./README.md)
 
-This repository is maintained as a self-contained Genie-TTS CPU/GPU integration
-package under `E:\Genie-TTS`. It is not just a Python source checkout: the
-package is expected to carry its own Python runtime, virtual environment,
-ONNX Runtime CPU/GPU packages, package-local CUDA/cuDNN user-mode DLLs, model
-resources, API server scripts, examples, and validation tools.
+Use it for audiobook, novel, and document narration through a local or LAN service. Prefer complete buffered WAV for readers; chunked stream WAV remains available for low-latency experiments and compatible clients.
 
-The current product target is a local or LAN FastAPI TTS service for listening
-workflows such as audiobook, novel, and document narration. CPU inference must
-remain available as a fallback, while CUDA inference is selected through ONNX
-Runtime execution providers when the package-local GPU runtime is installed.
+## Start Here
 
-Current reader conclusion: `mode=buffered` on `/tts/legado.wav` is the stable
-Android/Legado listening path. `mode=stream` is retained for low-latency
-experiments and clients that tolerate chunked WAV streams.
+- [Project tour (中文)](Docs/Showcase.md): actual WebUI captures, workflows, and evidence for repository-specific work.
+- [API contract](Docs/API-Service.md): direct synthesis, long-form jobs, and reader response modes.
+- [Architecture](Docs/Architecture.md): inference, job, provider, and client boundaries.
+- [Maintenance](Docs/Maintenance.md): runtime checks and real synthesis validation.
+
+![Actual WebUI from the public source revision](Docs/assets/showcase/webui-desktop.png)
+
+The capture uses a local CPU configuration with no model loaded. It is not proof of GPU synthesis or speech quality.
+
+## What the Repository Includes
+
+Git contains source, scripts, documentation, and examples. **A source checkout is not a ready-to-run integration bundle.**
+Prepare package-local Python, dependencies, model resources, and reference audio separately; they are not tracked in Git.
+Current Windows examples use `E:\Genie-TTS`; see [maintenance](Docs/Maintenance.md) for the required layout.
+Do not describe a source ZIP without runtimes and models as a one-click installer.
 
 ## Package Rules
 

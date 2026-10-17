@@ -1,12 +1,28 @@
-# Genie-TTS Windows 整合包
+# Genie-TTS-GPU
+
+面向本机与局域网的 Windows 语音合成工作台。基于 Genie-TTS／GPT-SoVITS，提供 CPU/CUDA 运行时、WebUI、HTTP API 与长文本任务。
 
 [简体中文](./README_zh.md) | [English](./README.md)
 
-本仓库维护的是位于 `E:\Genie-TTS` 的自包含 Genie-TTS CPU/GPU Windows 整合包。它不只是源码目录：正常形态下，这个目录应同时携带包内 Python 运行时、虚拟环境、ONNX Runtime CPU/GPU 包、包内 CUDA/cuDNN 用户态 DLL、模型资源、API 服务脚本、示例和验证工具。
+面向有声书、小说与文档朗读，提供本机或局域网可调用的语音服务。阅读器优先使用完整 buffered WAV；分块 stream WAV 用于低延迟实验及兼容客户端。
 
-当前产品目标是一个可本机或局域网调用的 FastAPI TTS 服务，用于有声书、小说、文档朗读等长时间听书场景。CPU 推理必须持续作为 fallback 可用；CUDA 推理由包内 ONNX Runtime execution provider 选择和加载。
+## 先看什么
 
-当前阅读器结论：`/tts/legado.wav` 的 `mode=buffered` 是 Android/Legado 稳定听书路径；`mode=stream` 保留为低延迟实验路径，以及给能正确处理 chunked WAV 的客户端使用。
+- [项目展示与复核](Docs/Showcase.md)：WebUI 实图、代表流程与个人增量工作的证据入口。
+- [API 合同](Docs/API-Service.md)：直接生成、长文本作业与阅读器响应的区别。
+- [架构](Docs/Architecture.md)：推理、任务、提供方与客户端边界。
+- [维护与验证](Docs/Maintenance.md)：运行环境和真实合成的分层检查。
+
+![公开源码版本的真实 WebUI](Docs/assets/showcase/webui-desktop.png)
+
+截图为本地 CPU 配置、未加载模型的真实界面，不表示 GPU 合成或音质已验收。
+
+## 获取与准备
+
+GitHub 仓库只包含源码、脚本、文档和示例。**下载源码不等于下载可直接运行的完整整合包**：
+包内 Python、依赖、模型与参考音频需要自行准备；它们不进入 Git。
+当前脚本以 `E:\Genie-TTS` 的 Windows 布局为例，完整要求见[维护说明](Docs/Maintenance.md)。
+不要把未包含运行环境和模型的源码 ZIP 当作一键安装包。
 
 ## 包内运行规则
 

@@ -7,6 +7,12 @@ open_jtalk_dic_utf_8-1.11/
 Docs/*
 !Docs/
 !Docs/*.md
+!Docs/assets/
+Docs/assets/*
+!Docs/assets/showcase/
+Docs/assets/showcase/*
+!Docs/assets/showcase/webui-desktop.png
+!Docs/assets/showcase/webui-mobile.png
 GenieData/
 CharacterModels/
 UserData/

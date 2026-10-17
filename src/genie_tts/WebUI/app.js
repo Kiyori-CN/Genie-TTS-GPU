@@ -2990,6 +2990,14 @@ async function refreshHealth() {
 
 async function refreshRuntime() {
   const runtime = await apiJson(config.endpoints.runtime, {method: "GET"});
+  const modeSelect = el("runtimeMode");
+  // 首次用真实运行模式初始化草稿；后续轮询不能覆盖用户尚未应用的选择。
+  if (!modeSelect.dataset.runtimeInitialized &&
+      Array.from(modeSelect.options).some((option) => option.value === runtime.runtime_mode)) {
+    modeSelect.value = runtime.runtime_mode;
+    modeSelect.dataset.runtimeInitialized = "true";
+    updateModeControls();
+  }
   renderRuntime(runtime);
   return runtime;
 }
@@ -4010,6 +4018,7 @@ async function init() {
   });
   el("endpointMode").addEventListener("change", updateModeControls);
   el("runtimeMode").addEventListener("change", () => {
+    el("runtimeMode").dataset.runtimeInitialized = "true";
     setBadge(el("runtimeBadge"), el("runtimeMode").value, "muted");
     updateModeControls();
   });
