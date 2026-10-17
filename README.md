@@ -1,231 +1,77 @@
 # Genie-TTS-GPU
 
-A Windows speech workspace for local and LAN use, built on Genie-TTS and GPT-SoVITS with CPU/CUDA runtime selection, a WebUI, HTTP APIs, and long-form jobs.
+**面向本机与局域网的 Windows 语音合成工作台。** 基于 Genie-TTS／GPT-SoVITS，将 CPU/CUDA 推理、WebUI、HTTP API、长文本作业与阅读器接入组织为可检查的本地服务。
 
-[简体中文](./README_zh.md) | [English](./README.md)
+[简体中文](README.md) · [English](README.en.md) · [环境准备](Docs/Quickstart.md) · [API 文档](Docs/API-Service.md)
 
-Use it for audiobook, novel, and document narration through a local or LAN service. Prefer complete buffered WAV for readers; chunked stream WAV remains available for low-latency experiments and compatible clients.
+## 可以用来做什么
 
-## Start Here
+| 场景 | 使用方式 |
+| --- | --- |
+| 在浏览器里测试声音 | WebUI 加载角色、设置参考音频和文本，生成并试听 |
+| 为小说、文档准备长音频 | 作业接口提交长文本，查询进度、取消任务、下载最终 WAV |
+| 接入 Android 阅读器 | 优先使用 Legado buffered 完整 WAV 示例，客户端单独验证 |
+| 为自己的程序提供语音 | HTTP API 区分 raw PCM、分块 WAV 和完整 WAV |
+| 检查计算设备与服务状态 | 查看 `/runtime` 的实际模型提供方，以及 `/status` 的任务状态 |
 
-- [Project tour (中文)](Docs/Showcase.md): actual WebUI captures, workflows, and evidence for repository-specific work.
-- [API contract](Docs/API-Service.md): direct synthesis, long-form jobs, and reader response modes.
-- [Architecture](Docs/Architecture.md): inference, job, provider, and client boundaries.
-- [Maintenance](Docs/Maintenance.md): runtime checks and real synthesis validation.
+![本地 CPU 模式下的真实 WebUI，未加载模型](Docs/assets/showcase/webui-desktop.png)
 
-![Actual WebUI from the public source revision](Docs/assets/showcase/webui-desktop.png)
+截图来自 2026-10-17 的本地 CPU 界面，未加载角色；它展示界面与状态，不代表 GPU 性能或音质验收。[更多界面和代表流程](Docs/Showcase.md)。
 
-The capture uses a local CPU configuration with no model loaded. It is not proof of GPU synthesis or speech quality.
+## 开始之前
 
-## What the Repository Includes
+**源码仓库不包含可直接运行的完整整合包。** 下载 ZIP 或 clone 后仍需准备包内 Python、依赖、共享资源、角色模型和参考音频；这些不进入 Git。
 
-Git contains source, scripts, documentation, and examples. **A source checkout is not a ready-to-run integration bundle.**
-Prepare package-local Python, dependencies, model resources, and reference audio separately; they are not tracked in Git.
-Current Windows examples use `E:\Genie-TTS`; see [maintenance](Docs/Maintenance.md) for the required layout.
-Do not describe a source ZIP without runtimes and models as a one-click installer.
+当前脚本面向 Windows，目录示例为 `E:\Genie-TTS`：
 
-## Package Rules
+| 目录 | 内容 |
+| --- | --- |
+| `Runtime/Python`、`Runtime/.venv` | 包内 Python 与依赖；CPU 依赖和 CUDA overlay 分别维护 |
+| `GenieData` | G2P、HuBERT、说话人编码等共享资源 |
+| `CharacterModels` | 自行准备且有权使用的角色 ONNX 模型与参考音频 |
+| `UserData` | 本地状态及任务音频输出 |
 
-- Use `E:\Genie-TTS\Runtime\.venv\Scripts\python.exe` for validation and local
-  tooling.
-- Do not depend on system Python, global pip, global CUDA Toolkit folders,
-  user `PATH`, or machine-wide environment variables for normal operation.
-- Do not add `Runtime`, `GenieData`, `CharacterModels`, `test`, or `UserData` to
-  git. They are package-local runtime/model/output artifacts.
-- CUDA support belongs in the package-local runtime. The NVIDIA display driver
-  and Windows system DLLs remain OS/driver boundaries.
-- Do not claim GPU TTS works only because `CUDAExecutionProvider` is listed as
-  available. Check each loaded ONNX session's actual provider list from
-  `/runtime`.
+GPU 模式还需要兼容的 NVIDIA 驱动及包内 CUDA/cuDNN 依赖。完整路径和准备条件见[首次合成指南](Docs/Quickstart.md)；不要把系统 Python、全局 CUDA 或修改机器 PATH 当作正常运行前提。
 
-## Quick Start
+## 先完成一次本机合成
 
-Start the local WebUI and LAN-accessible API in one step:
+准备好上述环境后，从只监听本机的 CPU 模式开始：
 
 ```cmd
-E:\Genie-TTS\go-webui.bat
+E:\Genie-TTS\go-webui.bat --host 127.0.0.1 --runtime cpu
 ```
 
-The launcher uses `E:\Genie-TTS\Runtime\.venv\Scripts\python.exe`, defaults to
-`cuda`, listens on `0.0.0.0`, opens `http://127.0.0.1:<port>/ui`, and prints the
-current LAN IPv4 WebUI URL. Command-line overrides are passed through, for
-example `go-webui.bat --runtime cpu --port 8001 --no-open`.
+1. 按启动器打印的本机地址打开 `/ui`，确认运行模式。
+2. 填写角色名、模型目录、语言、参考音频与对应原文，完成加载与参考设置。
+3. 输入一段自己的文本，选择完整 WAV，生成后试听并检查内容是否完整。
+4. 需要 GPU 时，按[运行指南](Docs/Quickstart.md)选择 CUDA，再加载模型并检查实际 session providers。
 
-Start a local CUDA API server:
+不带参数双击启动器默认请求 CUDA、监听 `0.0.0.0`；端口占用时可能选择空闲端口，以打印地址为准。上面的命令显式选择本机 CPU，不会更改启动器默认值。
 
-```powershell
-E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 127.0.0.1 -Port 8000
-```
+## 接入方式怎么选
 
-Start a LAN-accessible CUDA API server:
+| 需求 | 推荐入口 | 需要留意 |
+| --- | --- | --- |
+| 普通播放器或文件下载 | `/tts/wav` | 等待合成完成后返回完整 WAV |
+| Android/Legado 阅读 | `/tts/legado.wav?mode=buffered` | 当前推荐兼容路径，仍需实际手机验收 |
+| 较长文本与后台任务 | `/jobs/tts` | 提交、轮询，再下载完成任务的 WAV |
+| 低延迟自定义客户端 | `/tts/raw` 或 stream WAV | PCM 与分块 WAV 有格式、长度和客户端兼容差异 |
 
-```powershell
-E:\Genie-TTS\Scripts\start-internal-api.ps1 -Runtime cuda -HostName 0.0.0.0 -Port 8000
-```
+复制请求和加载参考示例见[首次合成](Docs/Quickstart.md)，字段、错误与并发语义以 [API 合同](Docs/API-Service.md)为准。[阅读器模板](Examples/legado_http_tts_buffered.json)中的地址需要替换成手机可达的电脑地址；手机的 `127.0.0.1` 指手机自身。
 
-Use `-Runtime cpu` for the CPU fallback path. Runtime mode should be selected
-before loading character models.
+## 文档导航
 
-Load the default Chinese validation character `feibi`:
-
-```powershell
-$base = 'http://127.0.0.1:8000'
-$loadBody = @{
-    character_name = 'feibi'
-    onnx_model_dir = 'E:\Genie-TTS\CharacterModels\v2ProPlus\feibi\tts_models'
-    language = 'Chinese'
-} | ConvertTo-Json
-Invoke-RestMethod -Uri "$base/load_character" -Method Post -ContentType 'application/json' -Body $loadBody
-```
-
-Set the reference audio:
-
-```powershell
-$referenceBody = @{
-    character_name = 'feibi'
-    audio_path = 'E:\Genie-TTS\CharacterModels\v2ProPlus\feibi\prompt_wav\zh_vo_Main_Linaxita_2_1_10_26.wav'
-    audio_text = '在此之前，请您务必继续享受旅居拉古那的时光。'
-    language = 'Chinese'
-} | ConvertTo-Json
-Invoke-RestMethod -Uri "$base/set_reference_audio" -Method Post -ContentType 'application/json' -Body $referenceBody
-```
-
-Generate a complete buffered WAV through the Legado-compatible endpoint:
-
-```powershell
-New-Item -ItemType Directory -Force -Path E:\Genie-TTS\test | Out-Null
-$ttsBody = @{
-    character_name = 'feibi'
-    text = '清晨的城市逐渐苏醒，街边的灯光还没有完全熄灭。她合上手里的书，抬头望向窗外，决定把今天的计划重新整理一遍。'
-    split_sentence = $true
-} | ConvertTo-Json
-Invoke-WebRequest -Uri "$base/tts/legado.wav?wait_timeout=300&mode=buffered" -Method Post -ContentType 'application/json' -Body $ttsBody -OutFile E:\Genie-TTS\test\feibi-legado-buffered.wav
-```
-
-For Android/Legado, start the server with `-HostName 0.0.0.0`, replace the
-placeholder IP in `Examples\legado_http_tts_buffered.json`, and use
-`/tts/legado.wav?wait_timeout=300&mode=buffered` for the stable listening path.
-The non-buffered `/tts/legado.wav?wait_timeout=300` path streams chunked WAV and
-is useful when first-audio latency matters more than Android media compatibility.
-
-Machine validation proves API behavior, WAV structure, and runtime/provider
-state. It does not prove Chinese pronunciation, segmentation, or content
-completeness. Generated Chinese audio still needs listening or another
-audio-content inspection step.
-
-## Main Endpoints
-
-| Endpoint | Purpose |
+| 你要做什么 | 阅读入口 |
 | --- | --- |
-| `GET /health` | Process health check. |
-| `GET /ui` | Browser inference panel for load/reference/TTS/job testing. |
-| `GET /ui/config` | WebUI defaults plus current local and LAN access URLs. |
-| `GET /runtime` | ONNX Runtime version, selected providers, available providers, loaded characters, and actual session providers. |
-| `POST /runtime/configure` | Select providers for subsequently loaded ONNX sessions. |
-| `GET /status` | Busy state, active TTS session, queued/running jobs, and recent reader request diagnostics. |
-| `POST /load_character` | Load/register an ONNX character model. |
-| `POST /set_reference_audio` | Set and preprocess reference audio/transcript for a character. |
-| `POST /tts` | Compatibility alias for raw PCM streaming. |
-| `POST /tts/raw` | Low-latency raw PCM S16LE stream. |
-| `POST /tts/wav` | Complete WAV response after synthesis finishes. |
-| `GET/POST /tts/stream.wav` | Generic WAV stream endpoint. |
-| `GET/POST /tts/legado.wav` | Reader/Legado-compatible WAV endpoint; supports `mode=stream` and `mode=buffered`. |
-| `POST /jobs/tts` | Queue a long-form TTS job and poll/download it through `/jobs`. |
-| `POST /stop` | Stop the current TTS task. |
-| `POST /clear_reference_audio_cache` | Clear cached reference-audio preprocessing. |
+| 准备环境、加载模型、首次合成 | [中文步骤](Docs/Quickstart.md) · [English steps](Docs/Quickstart.en.md) |
+| 无法启动、没有声音、GPU 或阅读器异常 | [故障排查](Docs/Troubleshooting.md) |
+| 编写客户端、提交作业 | [API 合同](Docs/API-Service.md) · [直接调用示例](Examples/api_client.py) · [作业示例](Examples/api_job_client.py) |
+| 了解模块和个人增量工作 | [架构](Docs/Architecture.md) · [项目展示](Docs/Showcase.md) |
+| 维护环境、检查运行与音频 | [维护和验证](Docs/Maintenance.md) |
 
-Detailed request/response contracts live in [Docs/API-Service.md](./Docs/API-Service.md).
+## 使用边界与来源
 
-## Audio Formats
-
-- Raw PCM: `POST /tts/raw` returns `application/octet-stream` bytes with
-  `X-Genie-Audio-Format: pcm_s16le`, 32000 Hz, mono, 16-bit little-endian PCM.
-- Stream WAV: `mode=stream` on `/tts/legado.wav` or `/tts/stream.wav` returns
-  `audio/wav` immediately and streams generated PCM chunks behind a WAV header.
-  It has lower startup latency but may not be accepted by every Android media
-  stack because the final data size is unknown at response start.
-- Buffered complete WAV: `mode=buffered` on `/tts/legado.wav` waits for synthesis
-  to finish in memory and returns a normal complete `audio/wav` response. This
-  is the current stable Legado reading mode.
-- Complete WAV: `POST /tts/wav` also returns a complete `audio/wav` file and is
-  suited to clients that need a normal file response.
-
-## Validation Commands
-
-Run these after documentation-only or low-risk maintenance changes:
-
-```powershell
-git -C E:\Genie-TTS diff --check
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m compileall E:\Genie-TTS\src
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m py_compile "E:\Genie-TTS\Tutorial\English\API Server Tutorial.py" "E:\Genie-TTS\Examples\api_client.py" "E:\Genie-TTS\Examples\api_job_client.py"
-```
-
-Run the package/runtime checks before claiming runtime health:
-
-```powershell
-E:\Genie-TTS\Scripts\verify-internal-runtime.ps1
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe -m pip check
-```
-
-Run real HTTP validation after API, server, runtime, or script changes:
-
-```powershell
-E:\Genie-TTS\Scripts\verify-internal-api.ps1 -Runtime cuda
-E:\Genie-TTS\Scripts\verify-legado-stream-api.ps1 -Runtime cuda
-E:\Genie-TTS\Scripts\verify-job-api.ps1 -Runtime cuda
-```
-
-The verification scripts create temporary files under `test` and remove their
-own outputs unless a keep-output option is explicitly used. Do not delete older
-test artifacts unless you can prove they were created by the current run.
-
-## Examples
-
-- `Examples\api_client.py`: loads `feibi`, sets reference audio, calls
-  `/tts/raw`, `/tts/legado.wav`, `/tts/legado.wav?mode=buffered`, and `/tts/wav`.
-- `Examples\api_job_client.py`: submits `/jobs/tts`, polls `/jobs/{job_id}`, and
-  downloads `/jobs/{job_id}/wav`.
-- `Examples\legado_http_tts.json`: Legado httpTTS source for streaming WAV.
-- `Examples\legado_http_tts_buffered.json`: Legado httpTTS source for buffered
-  complete WAV, currently the stable Android/Legado reading option.
-
-Example client run against an already-started local server:
-
-```powershell
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe E:\Genie-TTS\Examples\api_client.py --base-url http://127.0.0.1:8000
-E:\Genie-TTS\Runtime\.venv\Scripts\python.exe E:\Genie-TTS\Examples\api_job_client.py --base-url http://127.0.0.1:8000
-```
-
-## Documentation Map
-
-- [README_zh.md](./README_zh.md): Simplified Chinese quick start for the same
-  local integration package.
-- [Docs/API-Service.md](./Docs/API-Service.md): detailed API contract, endpoint
-  semantics, headers, error behavior, and client examples.
-- [Docs/Architecture.md](./Docs/Architecture.md): current module boundaries,
-  data flow, and known maintenance pressure points.
-- [Docs/Maintenance.md](./Docs/Maintenance.md): validation chains, release
-  checks, troubleshooting, and cleanup rules.
-- [AGENTS.md](./AGENTS.md): execution rules for future Codex/AI agents working
-  in this repository.
-
-## Development Notes
-
-- Keep source dependencies CPU-friendly in `requirements.txt`; use
-  `requirements-cuda.txt` for the package-local CUDA overlay.
-- Preserve existing endpoints unless a compatibility migration is documented.
-- Keep CPU fallback, CUDA runtime selection, `/runtime`, `/status`, job API, and
-  Legado buffered compatibility stable while developing new features.
-- Do not deep-rewrite decoder loops, ONNX Runtime IO Binding, batching, or
-  inference-core behavior without a measured CPU/GPU baseline and real TTS
-  correctness proof.
-- Use longer Chinese passages with `split_sentence=true` for synthesis
-  validation. Very short phrases do not exercise the audiobook/listening path.
-
-## Upstream Lineage
-
-Genie-TTS is based on the open-source GPT-SoVITS ecosystem and supports
-GPT-SoVITS V2/V2ProPlus style ONNX models for Japanese, English, Chinese, and
-Korean inference. This repository's active maintenance focus is the local
-Windows integration package and its API/runtime reliability rather than generic
-pip installation packaging.
+- 服务不自带公网身份与访问控制；局域网接入按实际网络边界配置，不直接暴露到不可信网络。
+- API 正常、WAV 结构正确、GPU session 创建和中文内容正确是不同验收项。音频需要试听，不宣称未经测量的加速倍数。
+- 推理与模型基础来自 [Genie-TTS](https://github.com/High-Logic/Genie-TTS)／[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)。本仓库主要维护 Windows 运行整合、服务、WebUI、任务与客户端兼容，不把上游模型与算法写作个人原创。
+- 源码许可见 [LICENSE](LICENSE)。模型、参考声音、上游组件和生成音频的使用条件需分别核对；仓库不授予第三方声音或素材的额外权利。

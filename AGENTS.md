@@ -243,10 +243,14 @@ Audio format rules:
 
 ## Documentation Boundaries
 
-- `README.md` is the human quick-start and orientation document for this local
-  integration package.
-- `README_zh.md` is the Simplified Chinese quick-start for the same local
-  integration package. Keep it semantically aligned with `README.md`.
+- `README.md` is the default Simplified Chinese orientation and quick-start entry.
+- `README.en.md` is the equivalent English entry. Keep its capabilities, setup
+  conditions and limitations aligned with `README.md`.
+- `README_zh.md` preserves legacy Chinese links and section anchors; direct new
+  readers to `README.md` and `Docs/Quickstart.md`.
+- `Docs/Quickstart.md` and `Docs/Quickstart.en.md` own detailed first-synthesis
+  recipes. `Docs/Troubleshooting.md` routes symptoms to existing API/runtime
+  diagnostics; do not duplicate the full API contract in root READMEs.
 - `Docs\API-Service.md` is the detailed endpoint contract and should remain the
   source of truth for request/response semantics.
 - `Docs\Architecture.md` is the factual module-boundary and data-flow document.
